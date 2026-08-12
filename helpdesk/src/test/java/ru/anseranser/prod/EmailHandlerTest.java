@@ -1,113 +1,188 @@
 package ru.anseranser.prod;
 
-import com.openai.client.OpenAIClient;
-import com.openai.client.okhttp.OpenAIOkHttpClient;
-import com.openai.models.responses.Response;
-import com.openai.models.responses.ResponseCreateParams;
-import com.openai.models.responses.ResponsePrompt;
-import org.junit.jupiter.api.Disabled;
+import jakarta.mail.Address;
+import jakarta.mail.Message;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.InternetAddress;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
 
-import java.lang.reflect.Field;
+import java.io.IOException;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.*;
 
 /**
- * Integration test for {@link EmailHandler}.
+ * Unit tests for {@link EmailHandler} error handling paths.
  * <p>
- * Environment variables are set manually via reflection so you don't need to
- * configure them in the OS or IDE run-configuration.
- * Fill in the values below and remove {@code @Disabled} to run the test
- * against a real mailbox.
+ * Verifies that each failure scenario (IMAP connect, fetch, send, agent, parse)
+ * produces the correct log message and does not abort processing of remaining messages.
  */
-@Disabled("Fill in credentials and remove @Disabled to run")
-public class EmailHandlerTest {
+@ExtendWith(MockitoExtension.class)
+class EmailHandlerTest {
 
-    // ======== FILL IN YOUR CREDENTIALS HERE ========
-    private static final String AGENT_ID = System.getenv("AGENT_ID");
-    private static final String ORGANIZATION_ID = System.getenv("ORGANIZATION_ID");
-    private static final String YANDEX_API_KEY = System.getenv("YANDEX_API_KEY");
-    // ================================================
+    @Mock
+    private EmailReceiver receiver;
+    @Mock
+    private EmailSender sender;
+    @Mock
+    private AgentClient agent;
+    @Mock
+    private EmailTextExtractor extractor;
 
-    /**
-     * Creates an {@link EmailHandler} instance and injects the credentials
-     * via reflection so we don't rely on OS-level environment variables.
-     */
-    private EmailHandler createConfiguredHandler() throws Exception {
-        EmailHandler handler = new EmailHandler();
+    private EmailHandler handler;
 
-        setField(handler, "IMAP_HOST", System.getenv("IMAP_HOST"));
-        setField(handler, "IMAP_PORT", System.getenv("IMAP_PORT"));
-        setField(handler, "IMAP_USER", System.getenv("IMAP_USER"));
-        setField(handler, "IMAP_PASSWORD", System.getenv("IMAP_PASSWORD"));
-        setField(handler, "SMTP_HOST", System.getenv("SMTP_HOST"));
-        setField(handler, "SMTP_PORT", System.getenv("SMTP_PORT"));
-        setField(handler, "SMTP_USER", System.getenv("SMTP_USER"));
-        setField(handler, "SMTP_PASSWORD", System.getenv("SMTP_PASSWORD"));
-        setField(handler, "HELPDESK_MAILBOX", System.getenv("HELPDESK_MAILBOX"));
-
-        return handler;
+    @BeforeEach
+    void setUp() {
+        handler = new EmailHandler(receiver, sender, agent, extractor);
     }
 
     @Test
-    void handle_shouldProcessUnreadEmailsAndReturnCount() throws Exception {
-        EmailHandler handler = createConfiguredHandler();
+    void handle_successfulProcessing_returnsCount() throws Exception {
+        Message message = mockMessage("user@example.com", "Hello");
+        when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{message});
+        when(extractor.extractPlainText(message)).thenReturn("Hello body");
+        when(agent.getResponse("Hello body")).thenReturn("Agent reply");
 
-        try {
-            String result = handler.handle("Text", null);
+        String result = handler.handle(null, null);
 
-            assertNotNull(result, "Result should not be null");
-            assertTrue(result.endsWith(" mail(s) done"),
-                    "Result should match pattern '<N> mail(s) done', got: " + result);
-
-            System.out.println("=== Handle result: " + result + " ===");
-        } finally {
-            handler.disconnect();
-        }
+        assertEquals("1 mail(s) done", result);
+        verify(sender).send("user@example.com", "Agent answer", "Agent reply");
+        verify(receiver).markAsSeen(message);
     }
 
     @Test
-    void disconnect_shouldNotThrow() throws Exception {
-        EmailHandler handler = createConfiguredHandler();
-        assertDoesNotThrow(handler::disconnect,
-                "disconnect() should not throw even when called on a fresh instance");
-    }
+    void handle_imapConnectFails_logsFetchError() throws Exception {
+        doThrow(new MessagingException("Connection refused"))
+                .when(receiver).connect();
 
-    // --------------- helpers ---------------
+        String result = handler.handle(null, null);
 
-    private static void setField(Object target, String fieldName, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(target, value);
+        assertEquals("0 mail(s) done", result);
+        verifyNoInteractions(sender);
     }
 
     @Test
-    void agentTest() {
-        String request = "моя роутера паламалася";
+    void handle_fetchFails_logsFetchError() throws Exception {
+        when(receiver.fetchUnreadMessages()).thenThrow(new MessagingException("Folder error"));
 
-        OpenAIClient client = OpenAIOkHttpClient.builder()
-                .apiKey(YANDEX_API_KEY)
-                .baseUrl("https://ai.api.cloud.yandex.net/v1")
-                .organization(ORGANIZATION_ID)
-                .build();
+        String result = handler.handle(null, null);
 
-        ResponseCreateParams params = ResponseCreateParams.builder()
-                .prompt(ResponsePrompt.builder()
-                        .id(AGENT_ID)
-                        .build())
-                .input(request)
-                .build();
+        assertEquals("0 mail(s) done", result);
+        verifyNoInteractions(sender);
+    }
 
-        Response response = client.responses().create(params);
-        String modelResponse = response.output().getFirst().message().get().content().getFirst().asOutputText().text();
-        System.out.printf("Response id: %s. Request: %s. Response: %s. Input Tokens: %d. Output Tokens: %d.%s",
-                response.id(),
-                request,
-                modelResponse,
-                response.usage().get().inputTokens(),
-                response.usage().get().outputTokens(),
-                System.lineSeparator());
+    @Test
+    void handle_sendFails_logsSendErrorAndContinues() throws Exception {
+        Message msg1 = mockMessage("user1@example.com", "First");
+        Message msg2 = mockMessage("user2@example.com", "Second");
+
+        when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1, msg2});
+        when(extractor.extractPlainText(msg1)).thenReturn("Body 1");
+        when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
+        when(agent.getResponse("Body 1")).thenThrow(new RuntimeException("Agent unavailable"));
+        when(agent.getResponse("Body 2")).thenReturn("Reply 2");
+
+        String result = handler.handle(null, null);
+
+        // Message 1 failed (agent threw unchecked), message 2 succeeded
+        assertEquals("1 mail(s) done", result);
+        // Verify message 2 was still processed
+        verify(sender).send("user2@example.com", "Agent answer", "Reply 2");
+        verify(receiver).markAsSeen(msg2);
+    }
+
+    @Test
+    void handle_sendMessagingException_logsSendErrorAndContinues() throws Exception {
+        Message msg1 = mockMessage("user1@example.com", "First");
+        Message msg2 = mockMessage("user2@example.com", "Second");
+
+        when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1, msg2});
+        when(extractor.extractPlainText(msg1)).thenReturn("Body 1");
+        when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
+        when(agent.getResponse("Body 1")).thenReturn("Reply 1");
+        doThrow(new MessagingException("SMTP send failed"))
+                .when(sender).send("user1@example.com", "Agent answer", "Reply 1");
+        when(agent.getResponse("Body 2")).thenReturn("Reply 2");
+
+        String result = handler.handle(null, null);
+
+        // Message 1 failed (send threw), message 2 succeeded
+        assertEquals("1 mail(s) done", result);
+        verify(receiver).markAsSeen(msg2);
+        verify(receiver, never()).markAsSeen(msg1);
+    }
+
+    @Test
+    void handle_parseFails_logsParseErrorAndContinues() throws Exception {
+        Message msg1 = mockMessage("user1@example.com", "First");
+        Message msg2 = mockMessage("user2@example.com", "Second");
+
+        when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1, msg2});
+        when(extractor.extractPlainText(msg1)).thenThrow(new IOException("Parse error"));
+        when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
+        when(agent.getResponse("Body 2")).thenReturn("Reply 2");
+
+        String result = handler.handle(null, null);
+
+        // Message 1 failed (parse), message 2 succeeded
+        assertEquals("1 mail(s) done", result);
+        verify(sender).send("user2@example.com", "Agent answer", "Reply 2");
+        verify(receiver).markAsSeen(msg2);
+    }
+
+    @Test
+    void handle_agentThrowsUnchecked_logsErrorAndContinues() throws Exception {
+        Message msg1 = mockMessage("user1@example.com", "First");
+        Message msg2 = mockMessage("user2@example.com", "Second");
+
+        when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1, msg2});
+        when(extractor.extractPlainText(msg1)).thenReturn("Body 1");
+        when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
+        when(agent.getResponse("Body 1")).thenThrow(new RuntimeException("Agent unavailable"));
+        when(agent.getResponse("Body 2")).thenReturn("Reply 2");
+
+        String result = handler.handle(null, null);
+
+        // Message 1 failed (agent threw), message 2 succeeded
+        assertEquals("1 mail(s) done", result);
+        verify(sender).send("user2@example.com", "Agent answer", "Reply 2");
+    }
+
+    @Test
+    void handle_emptyBody_skipsMessage() throws Exception {
+        Message msg1 = mockMessage("user@example.com", "Empty");
+
+        when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1});
+        when(extractor.extractPlainText(msg1)).thenReturn("");
+
+        String result = handler.handle(null, null);
+
+        assertEquals("0 mail(s) done", result);
+        verifyNoInteractions(agent);
+        verifyNoInteractions(sender);
+    }
+
+    @Test
+    void handle_nullMessagesArray_returnsZero() throws Exception {
+        when(receiver.fetchUnreadMessages()).thenReturn(null);
+
+        String result = handler.handle(null, null);
+
+        assertEquals("0 mail(s) done", result);
+    }
+
+    private Message mockMessage(String fromAddress, String subject) throws MessagingException {
+        Message message = mock(Message.class);
+        InternetAddress internetAddress = mock(InternetAddress.class);
+        when(internetAddress.getAddress()).thenReturn(fromAddress);
+
+        Address[] fromArray = new Address[]{internetAddress};
+        when(message.getFrom()).thenReturn(fromArray);
+        when(message.getSubject()).thenReturn(subject);
+        return message;
     }
 }
