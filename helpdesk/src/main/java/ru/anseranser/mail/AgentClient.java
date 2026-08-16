@@ -1,4 +1,4 @@
-package ru.anseranser.prod;
+package ru.anseranser.mail;
 
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;

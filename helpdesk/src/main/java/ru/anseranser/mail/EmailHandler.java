@@ -1,4 +1,4 @@
-package ru.anseranser.prod;
+package ru.anseranser.mail;
 
 import jakarta.mail.Address;
 import jakarta.mail.Message;
