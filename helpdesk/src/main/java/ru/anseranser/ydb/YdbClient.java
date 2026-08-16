@@ -10,11 +10,14 @@ import tech.ydb.table.TableClient;
 import tech.ydb.table.query.DataQuery;
 import tech.ydb.table.query.DataQueryResult;
 import tech.ydb.table.query.Params;
+import tech.ydb.table.result.ResultSetReader;
+import tech.ydb.table.result.ValueReader;
 import tech.ydb.table.settings.ExecuteDataQuerySettings;
 import tech.ydb.table.transaction.TableTransaction;
 import tech.ydb.table.transaction.TxControl;
 import tech.ydb.table.values.PrimitiveValue;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 import java.time.Duration;
@@ -122,6 +125,55 @@ public class YdbClient implements AutoCloseable {
         response.addProperty("ticket_id", ticketId);
         response.addProperty("created_at", createdAt);
         return response.toString();
+    }
+
+    public String listMyTickets(String userId) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("userId must not be blank");
+        }
+
+        String yql = "SELECT t.id, t.status, t.category, t.created_at, "
+                + "(SELECT m.text FROM messages AS m WHERE m.ticket_id = t.id "
+                + "ORDER BY m.created_at LIMIT 1) AS text "
+                + "FROM tickets AS t VIEW tickets_by_user "
+                + "WHERE t.user_id = $user_id";
+
+        try {
+            Result<DataQueryResult> result = executeQuery(yql, Map.of("user_id", userId)).join();
+            if (!result.isSuccess()) {
+                throw new RuntimeException("YDB error: " + result.getStatus());
+            }
+
+            DataQueryResult dataResult = result.getValue();
+            ResultSetReader resultSet = dataResult.getResultSet(0);
+
+            JsonArray tickets = new JsonArray();
+            while (resultSet.next()) {
+                JsonObject ticket = new JsonObject();
+                ticket.addProperty("id", ((PrimitiveValue) resultSet.getColumn("id").getValue()).getText());
+                ticket.addProperty("status", ((PrimitiveValue) resultSet.getColumn("status").getValue()).getText());
+                ticket.addProperty("category", ((PrimitiveValue) resultSet.getColumn("category").getValue()).getText());
+                ticket.addProperty("created_at", ((PrimitiveValue) resultSet.getColumn("created_at").getValue()).getText());
+
+                ValueReader textReader = resultSet.getColumn("text");
+                String text = "";
+                if (textReader != null && textReader.getValue() instanceof PrimitiveValue pv) {
+                    String t = pv.getText();
+                    if (t != null) {
+                        text = t;
+                    }
+                }
+                ticket.addProperty("text", text);
+
+                tickets.add(ticket);
+            }
+
+            return tickets.toString();
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to list tickets: " + e.getMessage(), e);
+        }
     }
 
     private Params convertParams(Map<String, Object> params) {

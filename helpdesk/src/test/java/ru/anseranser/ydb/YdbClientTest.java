@@ -14,8 +14,11 @@ import tech.ydb.table.TableClient;
 import tech.ydb.table.query.DataQuery;
 import tech.ydb.table.query.DataQueryResult;
 import tech.ydb.table.query.Params;
+import tech.ydb.table.result.ValueReader;
+import tech.ydb.table.result.ResultSetReader;
 import tech.ydb.table.settings.ExecuteDataQuerySettings;
 import tech.ydb.table.transaction.TableTransaction;
+import tech.ydb.table.values.PrimitiveValue;
 
 import java.time.Duration;
 import java.util.HashMap;
@@ -225,5 +228,127 @@ class YdbClientTest {
     void createTicket_nullText_throwsIllegalArgument() {
         assertThrows(IllegalArgumentException.class, () ->
                 ydbClient.createTicket("user@example.com", "bug", null));
+    }
+
+    // --- listMyTickets ---
+
+    @Test
+    void listMyTickets_hasTickets_returnsJsonArray() {
+        when(tableClient.createSession(any(Duration.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(session)));
+
+        DataQuery preparedQuery = mock(DataQuery.class);
+        when(session.prepareDataQuery(any(String.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(preparedQuery)));
+
+        DataQueryResult queryResult = mock(DataQueryResult.class);
+        when(preparedQuery.execute(
+                any(),
+                any(Params.class),
+                any(ExecuteDataQuerySettings.class)
+        )).thenReturn(CompletableFuture.completedFuture(Result.success(queryResult)));
+
+        ResultSetReader resultSet = mock(ResultSetReader.class);
+        when(queryResult.getResultSet(0)).thenReturn(resultSet);
+
+        ValueReader id1 = mock(ValueReader.class);
+        ValueReader status1 = mock(ValueReader.class);
+        ValueReader category1 = mock(ValueReader.class);
+        ValueReader createdAt1 = mock(ValueReader.class);
+        ValueReader text1 = mock(ValueReader.class);
+
+        ValueReader id2 = mock(ValueReader.class);
+        ValueReader status2 = mock(ValueReader.class);
+        ValueReader category2 = mock(ValueReader.class);
+        ValueReader createdAt2 = mock(ValueReader.class);
+        ValueReader text2 = mock(ValueReader.class);
+
+        when(resultSet.next()).thenReturn(true).thenReturn(true).thenReturn(false);
+        when(resultSet.getColumn("id")).thenReturn(id1).thenReturn(id2);
+        when(resultSet.getColumn("status")).thenReturn(status1).thenReturn(status2);
+        when(resultSet.getColumn("category")).thenReturn(category1).thenReturn(category2);
+        when(resultSet.getColumn("created_at")).thenReturn(createdAt1).thenReturn(createdAt2);
+        when(resultSet.getColumn("text")).thenReturn(text1).thenReturn(text2);
+
+        doReturn(PrimitiveValue.newText("ticket-1")).when(id1).getValue();
+        doReturn(PrimitiveValue.newText("open")).when(status1).getValue();
+        doReturn(PrimitiveValue.newText("bug")).when(category1).getValue();
+        doReturn(PrimitiveValue.newText("2025-01-01T00:00:00Z")).when(createdAt1).getValue();
+        doReturn(PrimitiveValue.newText("First message")).when(text1).getValue();
+
+        doReturn(PrimitiveValue.newText("ticket-2")).when(id2).getValue();
+        doReturn(PrimitiveValue.newText("closed")).when(status2).getValue();
+        doReturn(PrimitiveValue.newText("feature")).when(category2).getValue();
+        doReturn(PrimitiveValue.newText("2025-01-02T00:00:00Z")).when(createdAt2).getValue();
+        doReturn(null).when(text2).getValue();
+
+        String response = ydbClient.listMyTickets("user@example.com");
+
+        assertNotNull(response);
+        assertTrue(response.contains("ticket-1"));
+        assertTrue(response.contains("ticket-2"));
+        assertTrue(response.contains("open"));
+        assertTrue(response.contains("closed"));
+        assertTrue(response.contains("First message"));
+        verify(session).close();
+    }
+
+    @Test
+    void listMyTickets_noTickets_returnsEmptyJsonArray() {
+        when(tableClient.createSession(any(Duration.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(session)));
+
+        DataQuery preparedQuery = mock(DataQuery.class);
+        when(session.prepareDataQuery(any(String.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(preparedQuery)));
+
+        DataQueryResult queryResult = mock(DataQueryResult.class);
+        when(preparedQuery.execute(
+                any(),
+                any(Params.class),
+                any(ExecuteDataQuerySettings.class)
+        )).thenReturn(CompletableFuture.completedFuture(Result.success(queryResult)));
+
+        ResultSetReader resultSet = mock(ResultSetReader.class);
+        when(queryResult.getResultSet(0)).thenReturn(resultSet);
+        when(resultSet.next()).thenReturn(false);
+
+        String response = ydbClient.listMyTickets("user@example.com");
+
+        assertNotNull(response);
+        assertEquals("[]", response);
+        verify(session).close();
+    }
+
+    @Test
+    void listMyTickets_ydbQueryFails_throwsRuntimeException() {
+        when(tableClient.createSession(any(Duration.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(session)));
+
+        DataQuery preparedQuery = mock(DataQuery.class);
+        when(session.prepareDataQuery(any(String.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(preparedQuery)));
+
+        when(preparedQuery.execute(
+                any(),
+                any(Params.class),
+                any(ExecuteDataQuerySettings.class)
+        )).thenReturn(CompletableFuture.failedFuture(new RuntimeException("YDB query error")));
+
+        assertThrows(RuntimeException.class, () ->
+                ydbClient.listMyTickets("user@example.com"));
+        verify(session).close();
+    }
+
+    @Test
+    void listMyTickets_blankUserId_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.listMyTickets(""));
+    }
+
+    @Test
+    void listMyTickets_nullUserId_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.listMyTickets(null));
     }
 }
