@@ -19,30 +19,22 @@ public class EventDispatcher {
     private static final Set<String> LIST_MY_TICKETS_KEYS = Set.of("user_id");
     private static final Set<String> APPEND_MESSAGE_KEYS = Set.of("ticket_id", "text", "role");
 
-    public Action resolve(String event) {
+    public Action dispatch(String event) {
         JsonObject json = parseEvent(event);
 
         if (json.has("httpMethod")) {
-            return resolveFromGateway(json);
+            return dispatchFromGateway(json);
         }
 
         if (json.has("action")) {
-            return resolveFromDirectInvoke(json);
+            return dispatchFromDirectInvoke(json);
         }
 
-        return resolveFromMcpHub(json);
+        return dispatchFromMcpHub(json);
     }
 
     public String extractBody(String event) {
-        JsonObject json = parseEvent(event);
-        if (json.has("body")) {
-            JsonElement body = json.get("body");
-            if (body.isJsonPrimitive()) {
-                return body.getAsString();
-            }
-            return body.toString();
-        }
-        return event;
+        return extractBodyFromJson(parseEvent(event));
     }
 
     private JsonObject parseEvent(String event) {
@@ -57,9 +49,9 @@ public class EventDispatcher {
         }
     }
 
-    private Action resolveFromGateway(JsonObject json) {
+    private Action dispatchFromGateway(JsonObject json) {
         String body = extractBodyFromJson(json);
-        return resolveFromMcpHub(parseEvent(body));
+        return dispatchFromMcpHub(parseEvent(body));
     }
 
     private String extractBodyFromJson(JsonObject json) {
@@ -73,7 +65,7 @@ public class EventDispatcher {
         return json.toString();
     }
 
-    private Action resolveFromDirectInvoke(JsonObject json) {
+    private Action dispatchFromDirectInvoke(JsonObject json) {
         String actionName = json.get("action").getAsString();
         try {
             return Action.valueOf(actionName.toUpperCase().replace("-", "_"));
@@ -82,7 +74,7 @@ public class EventDispatcher {
         }
     }
 
-    private Action resolveFromMcpHub(JsonObject json) {
+    private Action dispatchFromMcpHub(JsonObject json) {
         Set<String> keys = json.keySet();
 
         if (keys.containsAll(CREATE_TICKET_KEYS)) {

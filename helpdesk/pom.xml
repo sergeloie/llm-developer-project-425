@@ -15,6 +15,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.release>21</maven.compiler.release>
     <yc-sdk-functions.version>2.14.0</yc-sdk-functions.version>
+    <ydb-sdk.version>2.4.9</ydb-sdk.version>
   </properties>
 
   <dependencyManagement>
@@ -23,6 +24,13 @@
         <groupId>org.junit</groupId>
         <artifactId>junit-bom</artifactId>
         <version>5.11.0</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>tech.ydb</groupId>
+        <artifactId>ydb-sdk-bom</artifactId>
+        <version>${ydb-sdk.version}</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -36,14 +44,13 @@
       <version>${yc-sdk-functions.version}</version>
     </dependency>
     <dependency>
+      <groupId>tech.ydb</groupId>
+      <artifactId>ydb-sdk-table</artifactId>
+    </dependency>
+    <dependency>
       <groupId>com.openai</groupId>
       <artifactId>openai-java</artifactId>
       <version>4.50.0</version>
-    </dependency>
-    <dependency>
-      <groupId>com.google.code.gson</groupId>
-      <artifactId>gson</artifactId>
-      <version>2.11.0</version>
     </dependency>
     <dependency>
       <groupId>org.jsoup</groupId>
