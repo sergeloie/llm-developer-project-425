@@ -147,4 +147,83 @@ class YdbClientTest {
         verify(tableClient).close();
         verify(transport).close();
     }
+
+    // --- createTicket ---
+
+    @Test
+    void createTicket_success_returnsTicketIdAndCreatedAt() {
+        when(tableClient.createSession(any(Duration.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(session)));
+
+        when(session.createNewTransaction(TxMode.SERIALIZABLE_RW)).thenReturn(transaction);
+
+        DataQueryResult result1 = mock(DataQueryResult.class);
+        DataQueryResult result2 = mock(DataQueryResult.class);
+        when(transaction.executeDataQuery(any(String.class), any(Params.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(result1)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(result2)));
+
+        when(transaction.commit()).thenReturn(CompletableFuture.completedFuture(Status.SUCCESS));
+
+        String response = ydbClient.createTicket("user@example.com", "bug", "Test ticket");
+
+        assertNotNull(response);
+        assertTrue(response.contains("ticket_id"));
+        assertTrue(response.contains("created_at"));
+        verify(transaction).commit();
+        verify(session).close();
+    }
+
+    @Test
+    void createTicket_ydbCommitFails_throwsRuntimeException() {
+        when(tableClient.createSession(any(Duration.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(session)));
+
+        when(session.createNewTransaction(TxMode.SERIALIZABLE_RW)).thenReturn(transaction);
+
+        when(transaction.executeDataQuery(any(String.class), any(Params.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(mock(DataQueryResult.class))));
+
+        when(transaction.commit())
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("YDB error")));
+
+        assertThrows(RuntimeException.class, () ->
+                ydbClient.createTicket("user@example.com", "bug", "Test"));
+    }
+
+    @Test
+    void createTicket_blankUserId_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.createTicket("", "bug", "Test"));
+    }
+
+    @Test
+    void createTicket_nullUserId_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.createTicket(null, "bug", "Test"));
+    }
+
+    @Test
+    void createTicket_blankCategory_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.createTicket("user@example.com", "", "Test"));
+    }
+
+    @Test
+    void createTicket_nullCategory_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.createTicket("user@example.com", null, "Test"));
+    }
+
+    @Test
+    void createTicket_blankText_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.createTicket("user@example.com", "bug", ""));
+    }
+
+    @Test
+    void createTicket_nullText_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.createTicket("user@example.com", "bug", null));
+    }
 }

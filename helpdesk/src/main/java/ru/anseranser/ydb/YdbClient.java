@@ -15,10 +15,14 @@ import tech.ydb.table.transaction.TableTransaction;
 import tech.ydb.table.transaction.TxControl;
 import tech.ydb.table.values.PrimitiveValue;
 
+import com.google.gson.JsonObject;
+
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public class YdbClient implements AutoCloseable {
@@ -74,6 +78,50 @@ public class YdbClient implements AutoCloseable {
         } finally {
             session.close();
         }
+    }
+
+    public String createTicket(String userId, String category, String text) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("userId must not be blank");
+        }
+        if (category == null || category.isBlank()) {
+            throw new IllegalArgumentException("category must not be blank");
+        }
+        if (text == null || text.isBlank()) {
+            throw new IllegalArgumentException("text must not be blank");
+        }
+
+        String ticketId = UUID.randomUUID().toString();
+        String messageId = UUID.randomUUID().toString();
+        String createdAt = Instant.now().toString();
+
+        QueryParams ticketQuery = new QueryParams(
+                "INSERT INTO tickets (id, user_id, category, status, created_at) VALUES ($id, $user_id, $category, $status, $created_at)",
+                Map.of("id", ticketId, "user_id", userId, "category", category, "status", "open", "created_at", createdAt)
+        );
+
+        QueryParams messageQuery = new QueryParams(
+                "INSERT INTO messages (id, ticket_id, text, role, created_at) VALUES ($id, $ticket_id, $text, $role, $created_at)",
+                Map.of("id", messageId, "ticket_id", ticketId, "text", text, "role", "user", "created_at", createdAt)
+        );
+
+        try {
+            List<Result<DataQueryResult>> results = executeInTransaction(List.of(ticketQuery, messageQuery)).join();
+            for (Result<DataQueryResult> result : results) {
+                if (!result.isSuccess()) {
+                    throw new RuntimeException("YDB error: " + result.getStatus());
+                }
+            }
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create ticket: " + e.getMessage(), e);
+        }
+
+        JsonObject response = new JsonObject();
+        response.addProperty("ticket_id", ticketId);
+        response.addProperty("created_at", createdAt);
+        return response.toString();
     }
 
     private Params convertParams(Map<String, Object> params) {
