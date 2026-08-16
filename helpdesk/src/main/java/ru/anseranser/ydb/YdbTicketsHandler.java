@@ -7,15 +7,10 @@ import yandex.cloud.sdk.functions.YcFunction;
 
 public class YdbTicketsHandler implements YcFunction<String, String> {
 
-    private final YdbClient ydbClient;
+    private volatile YdbClient ydbClient;
     private final EventDispatcher dispatcher;
 
     public YdbTicketsHandler() {
-        this.ydbClient = new YdbClient(
-                System.getenv("YDB_ENDPOINT"),
-                System.getenv("YDB_DATABASE"),
-                System.getenv("YDB_TOKEN")
-        );
         this.dispatcher = new EventDispatcher();
     }
 
@@ -24,22 +19,44 @@ public class YdbTicketsHandler implements YcFunction<String, String> {
         this.dispatcher = dispatcher;
     }
 
+    private YdbClient getOrCreateYdbClient() {
+        if (ydbClient == null) {
+            synchronized (this) {
+                if (ydbClient == null) {
+                    String endpoint = System.getenv("YDB_ENDPOINT");
+                    String database = System.getenv("YDB_DATABASE");
+                    String token = System.getenv("YDB_TOKEN");
+
+                    if (endpoint == null || database == null || token == null) {
+                        throw new IllegalStateException(
+                                "YDB not configured: YDB_ENDPOINT, YDB_DATABASE, YDB_TOKEN must be set"
+                        );
+                    }
+
+                    ydbClient = new YdbClient(endpoint, database, token);
+                }
+            }
+        }
+        return ydbClient;
+    }
+
     @Override
     public String handle(String s, Context context) {
+        YdbClient client = getOrCreateYdbClient();
         EventDispatcher.Action action = dispatcher.dispatch(s);
         String body = dispatcher.extractBody(s);
         JsonObject json = JsonParser.parseString(body).getAsJsonObject();
 
         return switch (action) {
-            case CREATE_TICKET -> ydbClient.createTicket(
+            case CREATE_TICKET -> client.createTicket(
                     json.get("user_id").getAsString(),
                     json.get("category").getAsString(),
                     json.get("text").getAsString()
             );
-            case LIST_MY_TICKETS -> ydbClient.listMyTickets(
+            case LIST_MY_TICKETS -> client.listMyTickets(
                     json.get("user_id").getAsString()
             );
-            case APPEND_MESSAGE -> ydbClient.appendMessage(
+            case APPEND_MESSAGE -> client.appendMessage(
                     json.get("ticket_id").getAsString(),
                     json.get("role").getAsString(),
                     json.get("text").getAsString(),
