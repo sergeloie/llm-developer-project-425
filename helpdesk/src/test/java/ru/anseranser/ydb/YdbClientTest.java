@@ -351,4 +351,82 @@ class YdbClientTest {
         assertThrows(IllegalArgumentException.class, () ->
                 ydbClient.listMyTickets(null));
     }
+
+    // --- appendMessage ---
+
+    @Test
+    void appendMessage_success_returnsMessageIdAndOk() {
+        when(tableClient.createSession(any(Duration.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(session)));
+
+        when(session.createNewTransaction(TxMode.SERIALIZABLE_RW)).thenReturn(transaction);
+
+        DataQueryResult result1 = mock(DataQueryResult.class);
+        when(transaction.executeDataQuery(any(String.class), any(Params.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(result1)));
+
+        when(transaction.commit()).thenReturn(CompletableFuture.completedFuture(Status.SUCCESS));
+
+        String response = ydbClient.appendMessage("ticket-1", "user", "Hello", "gpt-4", 100L, 200L, 1500);
+
+        assertNotNull(response);
+        assertTrue(response.contains("message_id"));
+        assertTrue(response.contains("ok"));
+        assertTrue(response.contains("\"ok\":true"));
+        verify(transaction).commit();
+        verify(session).close();
+    }
+
+    @Test
+    void appendMessage_ydbCommitFails_throwsRuntimeException() {
+        when(tableClient.createSession(any(Duration.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(session)));
+
+        when(session.createNewTransaction(TxMode.SERIALIZABLE_RW)).thenReturn(transaction);
+
+        when(transaction.executeDataQuery(any(String.class), any(Params.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(mock(DataQueryResult.class))));
+
+        when(transaction.commit())
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("YDB error")));
+
+        assertThrows(RuntimeException.class, () ->
+                ydbClient.appendMessage("ticket-1", "user", "Hello", "gpt-4", 100L, 200L, 1500));
+    }
+
+    @Test
+    void appendMessage_blankTicketId_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.appendMessage("", "user", "Hello", "gpt-4", 100L, 200L, 1500));
+    }
+
+    @Test
+    void appendMessage_nullTicketId_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.appendMessage(null, "user", "Hello", "gpt-4", 100L, 200L, 1500));
+    }
+
+    @Test
+    void appendMessage_blankRole_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.appendMessage("ticket-1", "", "Hello", "gpt-4", 100L, 200L, 1500));
+    }
+
+    @Test
+    void appendMessage_nullRole_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.appendMessage("ticket-1", null, "Hello", "gpt-4", 100L, 200L, 1500));
+    }
+
+    @Test
+    void appendMessage_blankText_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.appendMessage("ticket-1", "user", "", "gpt-4", 100L, 200L, 1500));
+    }
+
+    @Test
+    void appendMessage_nullText_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ydbClient.appendMessage("ticket-1", "user", null, "gpt-4", 100L, 200L, 1500));
+    }
 }

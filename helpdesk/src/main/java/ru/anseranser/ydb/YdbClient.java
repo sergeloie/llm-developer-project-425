@@ -176,6 +176,55 @@ public class YdbClient implements AutoCloseable {
         }
     }
 
+    public String appendMessage(String ticketId, String role, String text, String model, long tokensIn, long tokensOut, int latencyMs) {
+        if (ticketId == null || ticketId.isBlank()) {
+            throw new IllegalArgumentException("ticketId must not be blank");
+        }
+        if (role == null || role.isBlank()) {
+            throw new IllegalArgumentException("role must not be blank");
+        }
+        if (text == null || text.isBlank()) {
+            throw new IllegalArgumentException("text must not be blank");
+        }
+
+        String messageId = UUID.randomUUID().toString();
+        String createdAt = Instant.now().toString();
+
+        QueryParams messageQuery = new QueryParams(
+                "INSERT INTO messages (id, ticket_id, text, role, model, tokens_in, tokens_out, latency_ms, created_at) "
+                        + "VALUES ($id, $ticket_id, $text, $role, $model, $tokens_in, $tokens_out, $latency_ms, $created_at)",
+                Map.of(
+                        "id", messageId,
+                        "ticket_id", ticketId,
+                        "text", text,
+                        "role", role,
+                        "model", model,
+                        "tokens_in", tokensIn,
+                        "tokens_out", tokensOut,
+                        "latency_ms", latencyMs,
+                        "created_at", createdAt
+                )
+        );
+
+        try {
+            List<Result<DataQueryResult>> results = executeInTransaction(List.of(messageQuery)).join();
+            for (Result<DataQueryResult> result : results) {
+                if (!result.isSuccess()) {
+                    throw new RuntimeException("YDB error: " + result.getStatus());
+                }
+            }
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to append message: " + e.getMessage(), e);
+        }
+
+        JsonObject response = new JsonObject();
+        response.addProperty("message_id", messageId);
+        response.addProperty("ok", true);
+        return response.toString();
+    }
+
     private Params convertParams(Map<String, Object> params) {
         if (params == null || params.isEmpty()) {
             return Params.empty();
