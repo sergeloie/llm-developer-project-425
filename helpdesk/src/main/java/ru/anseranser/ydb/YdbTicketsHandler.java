@@ -8,15 +8,19 @@ import yandex.cloud.sdk.functions.YcFunction;
 public class YdbTicketsHandler implements YcFunction<String, String> {
 
     private volatile YdbClient ydbClient;
-    private final EventDispatcher dispatcher;
+    private EventDispatcher dispatcher;
 
+    /** Public no-arg constructor — required by Yandex Cloud Function (YcFunction). */
     public YdbTicketsHandler() {
         this.dispatcher = new EventDispatcher();
     }
 
-    YdbTicketsHandler(YdbClient ydbClient, EventDispatcher dispatcher) {
-        this.ydbClient = ydbClient;
-        this.dispatcher = dispatcher;
+    /** Package-private static factory for tests — injects mocks directly. */
+    static YdbTicketsHandler createForTest(YdbClient ydbClient, EventDispatcher dispatcher) {
+        YdbTicketsHandler handler = new YdbTicketsHandler();
+        handler.ydbClient = ydbClient;
+        handler.dispatcher = dispatcher;
+        return handler;
     }
 
     private YdbClient getOrCreateYdbClient() {
@@ -43,11 +47,10 @@ public class YdbTicketsHandler implements YcFunction<String, String> {
     @Override
     public String handle(String s, Context context) {
         YdbClient client = getOrCreateYdbClient();
-        EventDispatcher.Action action = dispatcher.dispatch(s);
-        String body = dispatcher.extractBody(s);
-        JsonObject json = JsonParser.parseString(body).getAsJsonObject();
+        DispatchResult result = dispatcher.dispatchAndExtract(s);
+        JsonObject json = JsonParser.parseString(result.body()).getAsJsonObject();
 
-        return switch (action) {
+        return switch (result.action()) {
             case CREATE_TICKET -> client.createTicket(
                     json.get("user_id").getAsString(),
                     json.get("category").getAsString(),

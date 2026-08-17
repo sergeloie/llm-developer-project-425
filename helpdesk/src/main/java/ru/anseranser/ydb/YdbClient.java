@@ -40,7 +40,8 @@ public class YdbClient implements AutoCloseable {
         this.tableClient = TableClient.newClient(transport).build();
     }
 
-    public YdbClient(GrpcTransport transport, TableClient tableClient) {
+    /** Package-private constructor for tests — allows injecting mocks. */
+    YdbClient(GrpcTransport transport, TableClient tableClient) {
         this.transport = transport;
         this.tableClient = tableClient;
     }
@@ -256,16 +257,4 @@ public class YdbClient implements AutoCloseable {
         transport.close();
     }
 
-    private static class StaticTokenProvider implements AuthProvider {
-        private final String token;
-
-        StaticTokenProvider(String token) {
-            this.token = token;
-        }
-
-        @Override
-        public AuthIdentity createAuthIdentity() {
-            return () -> token;
-        }
-    }
 }

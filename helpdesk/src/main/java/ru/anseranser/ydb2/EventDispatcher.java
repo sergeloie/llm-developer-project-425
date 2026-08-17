@@ -1,4 +1,4 @@
-package ru.anseranser.ydb;
+package ru.anseranser.ydb2;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
