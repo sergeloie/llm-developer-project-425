@@ -26,6 +26,7 @@ public class YdbTicketsHandler implements YcFunction<String, String> {
         } catch (Exception e) {
             e.printStackTrace();
             System.out.println(e.getMessage());
+            return "error: " + e.getMessage();
         }
     }
 }

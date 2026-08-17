@@ -22,7 +22,7 @@ class YdbTicketsHandlerTest {
     @BeforeEach
     void setUp() {
         dispatcher = new EventDispatcher();
-        handler = new YdbTicketsHandler(ydbClient, dispatcher);
+        handler = YdbTicketsHandler.createForTest(ydbClient, dispatcher);
     }
 
     @Test

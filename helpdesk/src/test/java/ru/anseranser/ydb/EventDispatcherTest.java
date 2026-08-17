@@ -23,35 +23,40 @@ class EventDispatcherTest {
     void resolve_directInvoke_createTicket() {
         String event = "{\"action\": \"create-ticket\", \"user_id\": \"u1\", \"category\": \"bug\", \"text\": \"hello\"}";
 
-        assertEquals(EventDispatcher.Action.CREATE_TICKET, dispatcher.dispatch(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(Action.CREATE_TICKET, result.action());
+        assertTrue(result.body().contains("user_id"));
     }
 
     @Test
     void resolve_directInvoke_listMyTickets() {
         String event = "{\"action\": \"list-my-tickets\", \"user_id\": \"u1\"}";
 
-        assertEquals(EventDispatcher.Action.LIST_MY_TICKETS, dispatcher.dispatch(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(Action.LIST_MY_TICKETS, result.action());
     }
 
     @Test
     void resolve_directInvoke_appendMessage() {
         String event = "{\"action\": \"append-message\", \"ticket_id\": \"t1\", \"text\": \"hi\", \"role\": \"user\"}";
 
-        assertEquals(EventDispatcher.Action.APPEND_MESSAGE, dispatcher.dispatch(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(Action.APPEND_MESSAGE, result.action());
     }
 
     @Test
     void resolve_directInvoke_upperCaseAction() {
         String event = "{\"action\": \"CREATE_TICKET\", \"user_id\": \"u1\", \"category\": \"bug\", \"text\": \"hello\"}";
 
-        assertEquals(EventDispatcher.Action.CREATE_TICKET, dispatcher.dispatch(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(Action.CREATE_TICKET, result.action());
     }
 
     @Test
     void resolve_directInvoke_unknownAction_throws() {
         String event = "{\"action\": \"delete-everything\"}";
 
-        assertThrows(IllegalArgumentException.class, () -> dispatcher.dispatch(event));
+        assertThrows(IllegalArgumentException.class, () -> dispatcher.dispatchAndExtract(event));
     }
 
     // --- API Gateway ---
@@ -61,7 +66,9 @@ class EventDispatcherTest {
         String body = "{\"user_id\": \"u1\", \"category\": \"bug\", \"text\": \"hello\"}";
         String event = "{\"httpMethod\": \"POST\", \"body\": \"" + body.replace("\"", "\\\"") + "\"}";
 
-        assertEquals(EventDispatcher.Action.CREATE_TICKET, dispatcher.dispatch(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(Action.CREATE_TICKET, result.action());
+        assertEquals(body, result.body());
     }
 
     @Test
@@ -69,7 +76,9 @@ class EventDispatcherTest {
         String body = "{\"user_id\": \"u1\"}";
         String event = "{\"httpMethod\": \"POST\", \"body\": \"" + body.replace("\"", "\\\"") + "\"}";
 
-        assertEquals(EventDispatcher.Action.LIST_MY_TICKETS, dispatcher.dispatch(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(Action.LIST_MY_TICKETS, result.action());
+        assertEquals(body, result.body());
     }
 
     @Test
@@ -77,14 +86,18 @@ class EventDispatcherTest {
         String body = "{\"ticket_id\": \"t1\", \"text\": \"hi\", \"role\": \"agent\"}";
         String event = "{\"httpMethod\": \"POST\", \"body\": \"" + body.replace("\"", "\\\"") + "\"}";
 
-        assertEquals(EventDispatcher.Action.APPEND_MESSAGE, dispatcher.dispatch(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(Action.APPEND_MESSAGE, result.action());
+        assertEquals(body, result.body());
     }
 
     @Test
     void resolve_apiGateway_bodyAsJsonObject() {
         String event = "{\"httpMethod\": \"POST\", \"body\": {\"user_id\": \"u1\", \"category\": \"feature\", \"text\": \"new feature\"}}";
 
-        assertEquals(EventDispatcher.Action.CREATE_TICKET, dispatcher.dispatch(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(Action.CREATE_TICKET, result.action());
+        assertTrue(result.body().contains("user_id"));
     }
 
     // --- MCP Hub ---
@@ -93,79 +106,84 @@ class EventDispatcherTest {
     void resolve_mcpHub_createTicket() {
         String event = "{\"user_id\": \"u1\", \"category\": \"bug\", \"text\": \"hello\"}";
 
-        assertEquals(EventDispatcher.Action.CREATE_TICKET, dispatcher.dispatch(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(Action.CREATE_TICKET, result.action());
     }
 
     @Test
     void resolve_mcpHub_listMyTickets() {
         String event = "{\"user_id\": \"u1\"}";
 
-        assertEquals(EventDispatcher.Action.LIST_MY_TICKETS, dispatcher.dispatch(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(Action.LIST_MY_TICKETS, result.action());
     }
 
     @Test
     void resolve_mcpHub_appendMessage() {
         String event = "{\"ticket_id\": \"t1\", \"text\": \"hi\", \"role\": \"user\"}";
 
-        assertEquals(EventDispatcher.Action.APPEND_MESSAGE, dispatcher.dispatch(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(Action.APPEND_MESSAGE, result.action());
     }
 
     @Test
     void resolve_mcpHub_unknownKeys_throws() {
         String event = "{\"foo\": \"bar\", \"baz\": 42}";
 
-        assertThrows(IllegalArgumentException.class, () -> dispatcher.dispatch(event));
+        assertThrows(IllegalArgumentException.class, () -> dispatcher.dispatchAndExtract(event));
     }
 
-    // --- extractBody ---
+    // --- extractBody equivalent (via body in DispatchResult) ---
 
     @Test
-    void extractBody_apiGateway_returnsBodyString() {
+    void body_apiGateway_returnsBodyString() {
         String body = "{\"user_id\": \"u1\"}";
         String event = "{\"httpMethod\": \"POST\", \"body\": \"" + body.replace("\"", "\\\"") + "\"}";
 
-        assertEquals(body, dispatcher.extractBody(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(body, result.body());
     }
 
     @Test
-    void extractBody_apiGateway_bodyAsObject_returnsJsonString() {
+    void body_apiGateway_bodyAsObject_returnsJsonString() {
         String event = "{\"httpMethod\": \"POST\", \"body\": {\"user_id\": \"u1\"}}";
 
-        String result = dispatcher.extractBody(event);
-        assertTrue(result.contains("user_id"));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertTrue(result.body().contains("user_id"));
     }
 
     @Test
-    void extractBody_noBody_returnsOriginalEvent() {
+    void body_noBody_returnsOriginalEvent() {
         String event = "{\"user_id\": \"u1\", \"category\": \"bug\", \"text\": \"hello\"}";
 
-        String result = dispatcher.extractBody(event);
-        assertTrue(result.contains("user_id"));
-        assertTrue(result.contains("category"));
-        assertTrue(result.contains("text"));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertTrue(result.body().contains("user_id"));
+        assertTrue(result.body().contains("category"));
+        assertTrue(result.body().contains("text"));
     }
 
     // --- Edge cases ---
 
     @Test
     void resolve_invalidJson_throws() {
-        assertThrows(IllegalArgumentException.class, () -> dispatcher.dispatch("not json"));
+        assertThrows(IllegalArgumentException.class, () -> dispatcher.dispatchAndExtract("not json"));
     }
 
     @Test
     void resolve_emptyObject_throws() {
-        assertThrows(IllegalArgumentException.class, () -> dispatcher.dispatch("{}"));
+        assertThrows(IllegalArgumentException.class, () -> dispatcher.dispatchAndExtract("{}"));
     }
 
     @Test
     void resolve_jsonArray_throws() {
-        assertThrows(IllegalArgumentException.class, () -> dispatcher.dispatch("[1, 2, 3]"));
+        assertThrows(IllegalArgumentException.class, () -> dispatcher.dispatchAndExtract("[1, 2, 3]"));
     }
 
     @Test
     void resolve_directInvoke_actionWithUnderscore() {
         String event = "{\"action\": \"CREATE_TICKET\", \"user_id\": \"u1\", \"category\": \"bug\", \"text\": \"hello\"}";
 
-        assertEquals(EventDispatcher.Action.CREATE_TICKET, dispatcher.dispatch(event));
+        DispatchResult result = dispatcher.dispatchAndExtract(event);
+        assertEquals(Action.CREATE_TICKET, result.action());
     }
 }
