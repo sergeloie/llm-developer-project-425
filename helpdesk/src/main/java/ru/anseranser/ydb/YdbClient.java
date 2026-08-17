@@ -47,6 +47,8 @@ public class YdbClient implements AutoCloseable {
     }
 
     public CompletableFuture<Result<DataQueryResult>> executeQuery(String yql, Map<String, Object> params) {
+        String yqlPreview = yql.length() > 80 ? yql.substring(0, 80) : yql;
+        System.out.println("[YdbClient] executeQuery: START yql=" + yqlPreview);
         Session session = tableClient.createSession(Duration.ofSeconds(10)).join().getValue();
         try {
             Params queryParams = convertParams(params);
@@ -55,13 +57,23 @@ public class YdbClient implements AutoCloseable {
                     TxControl.serializableRw().setCommitTx(true),
                     queryParams,
                     new ExecuteDataQuerySettings()
-            );
-        } finally {
+            ).whenComplete((result, ex) -> {
+                session.close();
+                if (ex != null) {
+                    System.out.println("[YdbClient] executeQuery: ERROR " + ex.getMessage() + " | caused by: " + ex.getCause());
+                } else {
+                    System.out.println("[YdbClient] executeQuery: FINISHED");
+                }
+            });
+        } catch (Exception e) {
+            System.out.println("[YdbClient] executeQuery: ERROR " + e.getMessage() + " | caused by: " + e.getCause());
             session.close();
+            throw e;
         }
     }
 
     public CompletableFuture<List<Result<DataQueryResult>>> executeInTransaction(List<QueryParams> queries) {
+        System.out.println("[YdbClient] executeInTransaction: START queryCount=" + queries.size());
         Session session = tableClient.createSession(Duration.ofSeconds(10)).join().getValue();
         try {
             TableTransaction tx = session.createNewTransaction(TxMode.SERIALIZABLE_RW);
@@ -73,18 +85,24 @@ public class YdbClient implements AutoCloseable {
             }
 
             tx.commit().join();
+            System.out.println("[YdbClient] executeInTransaction: Committed successfully");
 
             List<Result<DataQueryResult>> results = new ArrayList<>();
             for (CompletableFuture<Result<DataQueryResult>> future : futures) {
                 results.add(future.join());
             }
+            System.out.println("[YdbClient] executeInTransaction: FINISHED");
             return CompletableFuture.completedFuture(results);
+        } catch (Exception e) {
+            System.out.println("[YdbClient] executeInTransaction: ERROR " + e.getMessage() + " | caused by: " + e.getCause());
+            throw e;
         } finally {
             session.close();
         }
     }
 
     public String createTicket(String userId, String category, String text) {
+        System.out.println("[YdbClient] createTicket: START userId=" + userId + " category=" + category);
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("userId must not be blank");
         }
@@ -94,6 +112,8 @@ public class YdbClient implements AutoCloseable {
         if (text == null || text.isBlank()) {
             throw new IllegalArgumentException("text must not be blank");
         }
+        String textPreview = text.length() > 100 ? text.substring(0, 100) : text;
+        System.out.println("[YdbClient] createTicket: Validation passed textPreview=" + textPreview);
 
         String ticketId = UUID.randomUUID().toString();
         String messageId = UUID.randomUUID().toString();
@@ -116,12 +136,16 @@ public class YdbClient implements AutoCloseable {
                     throw new RuntimeException("YDB error: " + result.getStatus());
                 }
             }
+            System.out.println("[YdbClient] createTicket: YDB transaction executed");
         } catch (RuntimeException e) {
+            System.out.println("[YdbClient] createTicket: ERROR " + e.getMessage() + " | caused by: " + e.getCause());
             throw e;
         } catch (Exception e) {
+            System.out.println("[YdbClient] createTicket: ERROR " + e.getMessage() + " | caused by: " + e.getCause());
             throw new RuntimeException("Failed to create ticket: " + e.getMessage(), e);
         }
 
+        System.out.println("[YdbClient] createTicket: FINISHED ticketId=" + ticketId);
         JsonObject response = new JsonObject();
         response.addProperty("ticket_id", ticketId);
         response.addProperty("created_at", createdAt);
@@ -129,6 +153,7 @@ public class YdbClient implements AutoCloseable {
     }
 
     public String listMyTickets(String userId) {
+        System.out.println("[YdbClient] listMyTickets: START userId=" + userId);
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("userId must not be blank");
         }
@@ -169,15 +194,20 @@ public class YdbClient implements AutoCloseable {
                 tickets.add(ticket);
             }
 
+            System.out.println("[YdbClient] listMyTickets: YDB query executed, resultCount=" + tickets.size());
+            System.out.println("[YdbClient] listMyTickets: FINISHED");
             return tickets.toString();
         } catch (RuntimeException e) {
+            System.out.println("[YdbClient] listMyTickets: ERROR " + e.getMessage() + " | caused by: " + e.getCause());
             throw e;
         } catch (Exception e) {
+            System.out.println("[YdbClient] listMyTickets: ERROR " + e.getMessage() + " | caused by: " + e.getCause());
             throw new RuntimeException("Failed to list tickets: " + e.getMessage(), e);
         }
     }
 
     public String appendMessage(String ticketId, String role, String text, String model, long tokensIn, long tokensOut, int latencyMs) {
+        System.out.println("[YdbClient] appendMessage: START ticketId=" + ticketId + " role=" + role);
         if (ticketId == null || ticketId.isBlank()) {
             throw new IllegalArgumentException("ticketId must not be blank");
         }
@@ -187,6 +217,7 @@ public class YdbClient implements AutoCloseable {
         if (text == null || text.isBlank()) {
             throw new IllegalArgumentException("text must not be blank");
         }
+        System.out.println("[YdbClient] appendMessage: Validation passed");
 
         String messageId = UUID.randomUUID().toString();
         String createdAt = Instant.now().toString();
@@ -214,12 +245,16 @@ public class YdbClient implements AutoCloseable {
                     throw new RuntimeException("YDB error: " + result.getStatus());
                 }
             }
+            System.out.println("[YdbClient] appendMessage: YDB transaction executed");
         } catch (RuntimeException e) {
+            System.out.println("[YdbClient] appendMessage: ERROR " + e.getMessage() + " | caused by: " + e.getCause());
             throw e;
         } catch (Exception e) {
+            System.out.println("[YdbClient] appendMessage: ERROR " + e.getMessage() + " | caused by: " + e.getCause());
             throw new RuntimeException("Failed to append message: " + e.getMessage(), e);
         }
 
+        System.out.println("[YdbClient] appendMessage: FINISHED messageId=" + messageId);
         JsonObject response = new JsonObject();
         response.addProperty("message_id", messageId);
         response.addProperty("ok", true);
@@ -230,6 +265,7 @@ public class YdbClient implements AutoCloseable {
         if (params == null || params.isEmpty()) {
             return Params.empty();
         }
+        System.out.println("[YdbClient] convertParams: START paramCount=" + params.size());
         Params queryParams = Params.create(params.size());
         for (Map.Entry<String, Object> entry : params.entrySet()) {
             String key = entry.getKey().startsWith("$") ? entry.getKey() : "$" + entry.getKey();
@@ -248,6 +284,7 @@ public class YdbClient implements AutoCloseable {
                 queryParams.put(key, PrimitiveValue.newText(value.toString()));
             }
         }
+        System.out.println("[YdbClient] convertParams: FINISHED");
         return queryParams;
     }
 
