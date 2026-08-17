@@ -112,8 +112,7 @@ public class YdbClient implements AutoCloseable {
         if (text == null || text.isBlank()) {
             throw new IllegalArgumentException("text must not be blank");
         }
-        String textPreview = text.length() > 100 ? text.substring(0, 100) : text;
-        System.out.println("[YdbClient] createTicket: Validation passed textPreview=" + textPreview);
+        System.out.println("[YdbClient] createTicket: Validation passed textPreview=" + (text.length() > 100 ? text.substring(0, 100) : text));
 
         String ticketId = UUID.randomUUID().toString();
         String messageId = UUID.randomUUID().toString();
