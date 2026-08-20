@@ -1,7 +1,8 @@
 package ru.anseranser.ydb;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import tech.ydb.auth.AuthProvider;
-import tech.ydb.auth.AuthIdentity;
 import tech.ydb.common.transaction.TxMode;
 import tech.ydb.core.Result;
 import tech.ydb.core.grpc.GrpcTransport;
@@ -17,9 +18,6 @@ import tech.ydb.table.transaction.TableTransaction;
 import tech.ydb.table.transaction.TxControl;
 import tech.ydb.table.values.PrimitiveValue;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -34,8 +32,12 @@ public class YdbClient implements AutoCloseable {
     private final TableClient tableClient;
 
     public YdbClient(String endpoint, String database, String token) {
+        this(endpoint, database, new StaticTokenProvider(token));
+    }
+
+    public YdbClient(String endpoint, String database, AuthProvider authProvider) {
         this.transport = GrpcTransport.forEndpoint(endpoint, database)
-                .withAuthProvider(new StaticTokenProvider(token))
+                .withAuthProvider(authProvider)
                 .build();
         this.tableClient = TableClient.newClient(transport).build();
     }

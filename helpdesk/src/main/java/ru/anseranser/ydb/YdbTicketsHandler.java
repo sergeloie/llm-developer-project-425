@@ -1,5 +1,6 @@
 package ru.anseranser.ydb;
 
+import tech.ydb.auth.AuthProvider;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import yandex.cloud.sdk.functions.Context;
@@ -33,16 +34,27 @@ public class YdbTicketsHandler implements YcFunction<String, String> {
                     String database = System.getenv("YDB_DATABASE");
                     String token = System.getenv("YDB_TOKEN");
 
-                    if (endpoint == null || database == null || token == null) {
-                        String missing = String.format("endpoint=%s, database=%s, token=%s",
-                                endpoint != null, database != null, token != null);
+                    if (endpoint == null || database == null) {
+                        String missing = String.format("endpoint=%s, database=%s",
+                                endpoint != null, database != null);
                         System.out.println("[YdbTicketsHandler] getOrCreateYdbClient: ERROR YDB not configured: " + missing);
                         throw new IllegalStateException(
-                                "YDB not configured: YDB_ENDPOINT, YDB_DATABASE, YDB_TOKEN must be set"
+                                "YDB not configured: YDB_ENDPOINT and YDB_DATABASE must be set"
                         );
                     }
 
-                    ydbClient = new YdbClient(endpoint, database, token);
+                    // Use static token if provided; otherwise fall back to metadata service
+                    // (equivalent to Python's ydb.iam.MetadataUrlCredentials())
+                    AuthProvider authProvider;
+                    if (token != null && !token.isBlank()) {
+                        System.out.println("[YdbTicketsHandler] getOrCreateYdbClient: Using static YDB_TOKEN");
+                        authProvider = new StaticTokenProvider(token);
+                    } else {
+                        System.out.println("[YdbTicketsHandler] getOrCreateYdbClient: Using MetadataService IAM credentials");
+                        authProvider = new MetadataTokenProvider();
+                    }
+
+                    ydbClient = new YdbClient(endpoint, database, authProvider);
                     System.out.println("[YdbTicketsHandler] getOrCreateYdbClient: YDB client initialized successfully");
                 } else {
                     System.out.println("[YdbTicketsHandler] getOrCreateYdbClient: YDB client already cached");
