@@ -40,7 +40,8 @@ public class EmailHandler implements YcFunction<String, String> {
         this.agent = new AgentClient(
                 System.getenv("YANDEX_API_KEY"),
                 System.getenv("AGENT_ID"),
-                System.getenv("ORGANIZATION_ID")
+                System.getenv("ORGANIZATION_ID"),
+                System.getenv("MCP_SERVER_URL")
         );
         this.extractor = new EmailTextExtractor();
     }
