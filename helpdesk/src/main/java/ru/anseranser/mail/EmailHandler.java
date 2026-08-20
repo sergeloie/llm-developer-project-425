@@ -1,5 +1,6 @@
 package ru.anseranser.mail;
 
+import com.google.gson.Gson;
 import jakarta.mail.Address;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
@@ -8,6 +9,7 @@ import yandex.cloud.sdk.functions.Context;
 import yandex.cloud.sdk.functions.YcFunction;
 
 import java.io.IOException;
+import java.util.Map;
 
 /**
  * Orchestrator that coordinates email receiving, text extraction,
@@ -93,7 +95,8 @@ public class EmailHandler implements YcFunction<String, String> {
                 return 0;
             }
 
-            String response = agent.getResponse(body);
+            String jsonRequest = new Gson().toJson(Map.of("user_id", from, "text", body));
+            String response = agent.getResponse(jsonRequest);
             sender.send(from, "Agent answer", response);
             receiver.markAsSeen(message);
             return 1;

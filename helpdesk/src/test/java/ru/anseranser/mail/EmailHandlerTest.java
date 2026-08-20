@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.ArgumentMatcher;
 
 import java.io.IOException;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -45,7 +46,8 @@ class EmailHandlerTest {
         Message message = mockMessage("user@example.com", "Hello");
         when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{message});
         when(extractor.extractPlainText(message)).thenReturn("Hello body");
-        when(agent.getResponse("Hello body")).thenReturn("Agent reply");
+        when(agent.getResponse(argThat(jsonContains("user@example.com", "Hello body"))))
+                .thenReturn("Agent reply");
 
         String result = handler.handle(null, null);
 
@@ -83,8 +85,10 @@ class EmailHandlerTest {
         when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1, msg2});
         when(extractor.extractPlainText(msg1)).thenReturn("Body 1");
         when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
-        when(agent.getResponse("Body 1")).thenThrow(new RuntimeException("Agent unavailable"));
-        when(agent.getResponse("Body 2")).thenReturn("Reply 2");
+        when(agent.getResponse(argThat(jsonContains("user1@example.com", "Body 1"))))
+                .thenThrow(new RuntimeException("Agent unavailable"));
+        when(agent.getResponse(argThat(jsonContains("user2@example.com", "Body 2"))))
+                .thenReturn("Reply 2");
 
         String result = handler.handle(null, null);
 
@@ -103,10 +107,12 @@ class EmailHandlerTest {
         when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1, msg2});
         when(extractor.extractPlainText(msg1)).thenReturn("Body 1");
         when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
-        when(agent.getResponse("Body 1")).thenReturn("Reply 1");
+        when(agent.getResponse(argThat(jsonContains("user1@example.com", "Body 1"))))
+                .thenReturn("Reply 1");
         doThrow(new MessagingException("SMTP send failed"))
                 .when(sender).send("user1@example.com", "Agent answer", "Reply 1");
-        when(agent.getResponse("Body 2")).thenReturn("Reply 2");
+        when(agent.getResponse(argThat(jsonContains("user2@example.com", "Body 2"))))
+                .thenReturn("Reply 2");
 
         String result = handler.handle(null, null);
 
@@ -124,7 +130,8 @@ class EmailHandlerTest {
         when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1, msg2});
         when(extractor.extractPlainText(msg1)).thenThrow(new IOException("Parse error"));
         when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
-        when(agent.getResponse("Body 2")).thenReturn("Reply 2");
+        when(agent.getResponse(argThat(jsonContains("user2@example.com", "Body 2"))))
+                .thenReturn("Reply 2");
 
         String result = handler.handle(null, null);
 
@@ -142,8 +149,10 @@ class EmailHandlerTest {
         when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1, msg2});
         when(extractor.extractPlainText(msg1)).thenReturn("Body 1");
         when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
-        when(agent.getResponse("Body 1")).thenThrow(new RuntimeException("Agent unavailable"));
-        when(agent.getResponse("Body 2")).thenReturn("Reply 2");
+        when(agent.getResponse(argThat(jsonContains("user1@example.com", "Body 1"))))
+                .thenThrow(new RuntimeException("Agent unavailable"));
+        when(agent.getResponse(argThat(jsonContains("user2@example.com", "Body 2"))))
+                .thenReturn("Reply 2");
 
         String result = handler.handle(null, null);
 
@@ -184,5 +193,14 @@ class EmailHandlerTest {
         when(message.getFrom()).thenReturn(fromArray);
         when(message.getSubject()).thenReturn(subject);
         return message;
+    }
+
+    /**
+     * Matcher that checks a JSON string contains both the expected user_id and text fields.
+     */
+    private ArgumentMatcher<String> jsonContains(String expectedUserId, String expectedText) {
+        return json -> json != null
+                && json.contains("\"user_id\":\"" + expectedUserId + "\"")
+                && json.contains("\"text\":\"" + expectedText + "\"");
     }
 }

@@ -11,6 +11,6 @@ public class AgentTest {
                 System.getenv("ORGANIZATION_ID"),
                 System.getenv("MCP_SERVER_URL"));
 
-        agentClient.getResponse("создай тикет feature, добавьте парсинг бамбука");
+        agentClient.getResponse("{\"user_id\": \"bo122t@assistant.ai\",\"text\": \"Всё сломалось, слышишь. Прод упал, ничего не работает\"}");
     }
 }

@@ -59,7 +59,7 @@ public class AgentClient {
                 .build();
 
         Response response = client.responses().create(params);
-        String modelResponse = response.output().getFirst().message().get().content().getFirst().asOutputText().text();
+        String modelResponse = response.output().getLast().message().get().content().getFirst().asOutputText().text();
 
         System.out.printf("Response id: %s. Request: %s. Response: %s. Input Tokens: %d. Output Tokens: %d.%s",
                 response.id(),
