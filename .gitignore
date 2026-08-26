@@ -2,3 +2,7 @@
 /.idea/
 /helpdesk/target/
 token.txt
+target
+*.md
+*.json
+*.iml
