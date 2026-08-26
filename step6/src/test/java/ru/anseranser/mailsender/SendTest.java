@@ -14,7 +14,6 @@ public class SendTest {
 
         String input = """
                 {
-                  "to": "tito1744@gmail.com",
                   "subject": "Summary of overdue tickets",
                   "body": [
                     {
@@ -39,8 +38,8 @@ public class SendTest {
                 System.getenv("SMTP_PORT"),
                 System.getenv("SMTP_USER"),
                 System.getenv("SMTP_PASSWORD"),
-                System.getenv("HELPDESK_MAILBOX"));
-        EmailSenderFunction emailSenderFunction = new EmailSenderFunction(emailSender);
+                System.getenv("SMTP_USER"));
+        EmailSenderFunction emailSenderFunction = new EmailSenderFunction(emailSender, System.getenv("HELPDESK_MAILBOX"));
 
         HttpHeaders headers = HttpRequest.newBuilder()
                 .uri(URI.create("https://unused.example.com"))

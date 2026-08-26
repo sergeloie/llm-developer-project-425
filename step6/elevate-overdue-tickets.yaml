@@ -1,0 +1,111 @@
+yawl: '0.2'
+defaultRetryPolicy:
+  errorList:
+    - ALL
+  errorListMode: INCLUDE
+start: fetchOverdueTickets
+steps:
+  fetchOverdueTickets:
+    databaseQuery:
+      connection:
+        type: YDB
+        host: ydb.serverless.yandexcloud.net
+        port: 2135
+        database: /ru-central1/b1gmfckotdqd4jc4k2p4/etn0mck2utta4gm7cavl
+        ssl: true
+        iam: true
+      query: |-
+        SELECT
+          id,
+          user_id,
+        category,
+        status,
+        text,
+        created_at
+        FROM tickets
+        WHERE status = 'open'
+          AND created_at < CurrentUtcTimestamp() - Interval('PT24H')
+        ORDER BY created_at ASC
+      mode: QUERY
+      retryPolicy:
+        errorList:
+          - YDB_CALL_SERVICE_UNAVAILABLE
+        errorListMode: INCLUDE
+        initialDelay: 5s
+        maxDelay: 30s
+        retryCount: 3
+        backoffRate: 2
+      output: '\({"tickets": .ResultSets[0]})'
+      next: checkTickets
+      catch: []
+    description: ''
+  checkTickets:
+    switch:
+      input: \(.)
+      choices:
+        - condition: .tickets | length == 0
+          next: noOverdueTickets
+      default:
+        next: generateDigest
+    description: ''
+  noOverdueTickets:
+    success: {}
+  generateDigest:
+    aiStudioAgent:
+      promptTemplateId: fvtu3g417klcgdhf6fih
+      message: "Проанализируй список просроченных тикетов службы поддержки (открыты более 24 часов).\n      Верни ответ строго по схеме:\n{\r\n  \"$schema\": \"http://json-schema.org/draft-04/schema#\",\r\n  \"type\": \"object\",\r\n  \"properties\": {\r\n    \"tickets\": {\r\n      \"type\": \"array\",\r\n      \"items\": [\r\n        {\r\n          \"type\": \"object\",\r\n          \"properties\": {\r\n            \"id\": {\r\n              \"description\": \"id тикета\",\r\n              \"type\": \"string\"\r\n            },\r\n            \"category\": {\r\n              \"description\": \"Категория тикета\",\r\n              \"type\": \"string\"\r\n            },\r\n            \"created_at\": {\r\n              \"description\": \"Дата и время создания тикета\",\r\n              \"type\": \"string\"\r\n            },\r\n            \"summary\": {\r\n              \"description\": \"Краткое содержание вопроса пользователя\",\r\n              \"type\": \"string\"\r\n            },\r\n            \"recommended_action\": {\r\n              \"description\": \"Действия, которые ты рекомендуешь совершить специалисту технической поддержки\",\r\n              \"type\": \"string\"\r\n            }\r\n          },\r\n          \"required\": [\r\n            \"id\",\r\n            \"category\",\r\n            \"created_at\",\r\n            \"summary\",\r\n            \"recommended_action\"\r\n          ]\r\n        }\r\n      ]\r\n    }\r\n  },\r\n  \"required\": [\r\n    \"tickets\"\r\n  ]\r\n}\n      Тикеты для анализа: {{ .tickets }}"
+      autoApprove: true
+      retryPolicy:
+        errorList:
+          - ALL
+        errorListMode: EXCLUDE
+        initialDelay: 10s
+        maxDelay: 60s
+        retryCount: 3
+        backoffRate: 2
+      output: |-
+        \({"digest": (try (.Result
+          | gsub("```json\\n?"; "") | gsub("```\\n?"; "") | gsub("```"; "")
+          | fromjson)
+        catch {"tickets": [], "raw_response": .Result, "parse_failed": true})})
+      next: markEscalated
+    description: ''
+  markEscalated:
+    databaseQuery:
+      connection:
+        type: YDB
+        host: ydb.serverless.yandexcloud.net
+        port: 2135
+        database: /ru-central1/b1gmfckotdqd4jc4k2p4/etn0mck2utta4gm7cavl
+        ssl: true
+        iam: true
+      query: >-
+        UPDATE tickets
+
+        SET status = 'escalated',
+
+        updated_at = CurrentUtcTimestamp()
+
+        WHERE id IN ({{ .tickets | map(.id) | map("'" + . + "'") | join(", ")
+        }})
+      mode: QUERY
+      retryPolicy:
+        errorList:
+          - YDB_CALL_SERVICE_UNAVAILABLE
+        errorListMode: INCLUDE
+        initialDelay: 5s
+        maxDelay: 30s
+        retryCount: 3
+        backoffRate: 2
+      next: step-functionCall864
+      catch: []
+    description: ''
+  step-functionCall864:
+    functionCall:
+      functionId: d4evk9lljvqkg2ffqkjk
+      tag: $latest
+      input: "{\r\n    \"subject\": \"Summary of overdue tickets\", \n    \"body\": {{.digest.tickets}} \n}"
+      next: done
+    description: ''
+  done:
+    success: {}
