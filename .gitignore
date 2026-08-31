@@ -1,9 +1,6 @@
 .env
 /.idea/
 token.txt
-*.md
-!README.MD
-*.json
 *.iml
 
 ### Java template
