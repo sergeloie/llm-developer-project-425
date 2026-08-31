@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 Parent POM + common модуль, 02 ydb-tickets — рефактор + PII/Injection (нужен `MCP_SERVER_URL` от ydb-tickets)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Модуль `email-poller` (`artifactId email-poller`, `version 1.2.0`, `dependencies: common`, `openai-java 4.50.0`, `angus-mail 2.0.5`, `jsoup 1.23.1`, `java-sdk-serverless`, `gson`) создан из `helpdesk/` (переименован), структура `src/main/java/ru/anseranser/mail/` (`EmailHandler`, `EmailReceiver`, `EmailTextExtractor`, `AgentClient`, использует `common.SmtpEmailSender` + `common.JsonEventParser`), удалён дубль `helpdesk/mail/EmailSender.java` (теперь `common`)
 - [ ] `AgentClient.getResponse` принимает `vectorStoreId` из `env VECTOR_STORE_ID`, строит `Tool.ofFileSearch(vector_store_ids=[single_id])` (один id — ограничение `step7/task.md:106`) + `Tool.ofMcp(serverLabel ydb-tickets, serverUrl MCP_SERVER_URL, requireApproval NEVER, allowedTools [append-message,create-ticket,list-my-tickets])`, `ResponseCreateParams` с `prompt id=AGENT_ID` + `organization`, `output.getLast().message().content` + `usage.inputTokens/outputTokens` логируются без PII
