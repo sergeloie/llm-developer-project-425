@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 Parent POM + common модуль
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Создан модуль `ydb-tickets` (`artifactId ydb-tickets`, `version 1.1.0`, `dependencies: common`, `tech.ydb ydb-sdk-table`, `yc-auth`, `jackson-databind`, `java-sdk-serverless`), `maven-shade-plugin` (`ManifestResourceTransformer mainClass ru.anseranser.ydb.YdbTicketsHandler`, `ServicesResourceTransformer`)
 - [ ] Рефактор `ydb2/Handler.java:23` → `ru.anseranser.ydb.YdbTicketsHandler` (YcFunction) + `EventDispatcher` (парсит `direct {"action"}`, `API Gateway {"httpMethod","body"}`, `MCP Hub` прямые ключи `user_id+category+text / user_id / ticket_id+role+text`) + `YdbClient` (методы `createTicket/listMyTickets/appendMessage`, `Params.of("$id", PrimitiveValue.newText)`, `TxControl.serializableRw().setCommitTx(true)`, `Instant.now()`)
