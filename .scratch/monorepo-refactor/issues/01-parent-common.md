@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Создан `pom.xml` в корне (`groupId ru.anseranser`, `artifactId helpdesk-parent`, `version 1.0.0`, `packaging pom`, `modules [common, email-poller, ydb-tickets, email-sender]`), `dependencyManagement`/`pluginManagement` фиксируют `yc-sdk 2.14.0`, `ydb 2.4.9`, `angus-mail 2.0.5`, `gson 2.11`, `junit 5.11`, `mockito 5.14`, `maven-shade 3.6.0`, `maven-compiler 3.13.0` `release 21`
 - [ ] Создан модуль `common` (`artifactId common`, `version 1.0.0`, `jar` без shade) с классами `ru.anseranser.pii.PiiMasker` (из `step8/PiiMasker.java`), `ru.anseranser.security.InjectionClassifier` (из `step8/InjectionClassifier.java`), `ru.anseranser.ydb.YdbTransportFactory`, `ru.anseranser.mail.SmtpEmailSender` (дедуп `helpdesk/mail/EmailSender.java` + `step6/mailsender/EmailSender.java`), `ru.anseranser.json.JsonEventParser` (логика `parseInput`/`detectAction` из `ydb2/Handler.java`)
