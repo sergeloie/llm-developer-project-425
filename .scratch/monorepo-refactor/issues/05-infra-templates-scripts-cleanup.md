@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 ydb-tickets — рефактор + PII/Injection, 03 email-poller — миграция helpdesk + RAG, 04 email-sender — выделение из step6
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] `infra/ydb/schema.sql` — единственный, `utf8`, два `CREATE TABLE` (`tickets` `PRIMARY KEY (id)` + `INDEX tickets_by_user GLOBAL ON (user_id)`, `messages` `PRIMARY KEY (ticket_id, id)`) из `schema.sql:1`, удалён `schema1.sql` и cp1251 грязь
 - [ ] `infra/mcp/mcp-tools.yaml.template` — 3 tool-а (`create-ticket`, `list-my-tickets`, `append-message`) с `input_json_schema` JSON-encoded строкой, `function_id: {{YDB_TICKETS_CF_ID}}`, `tag: $latest`
