@@ -1,0 +1,21 @@
+#!/bin/sh
+# Guardrail: blocks commit if staged files contain secrets
+# Requires gitleaks: winget install gitleaks  or  brew install gitleaks
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "WARNING: gitleaks not found, skipping secret scan."
+  echo "  Install: winget install gitleaks  (or brew install gitleaks)"
+  exit 0
+fi
+
+gitleaks protect --staged --verbose --redact --no-banner
+STATUS=$?
+if [ $STATUS -ne 0 ]; then
+  echo ""
+  echo "Commit blocked: potential secrets detected!"
+  echo "  1. Remove secret from code, move to .env / Yandex Lockbox / env vars"
+  echo "  2. If false positive, add exception:"
+  echo "     - inline: // gitleaks:allow"
+  echo "     - or in .gitleaksignore -> \"path/to/file:generic-api-key\""
+  echo "  3. Docs: https://github.com/gitleaks/gitleaks"
+  exit 1
+fi

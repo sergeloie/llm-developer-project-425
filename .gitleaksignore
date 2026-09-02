@@ -1,0 +1,14 @@
+# .gitleaksignore — исключения для локального pre-commit хука
+# Формат: путь:строка или путь:правило. См. https://github.com/gitleaks/gitleaks#gitleaksignore
+# Пример: src/main/java/ru/anseranser/FakeTest.java:generic-api-key
+
+# Тестовые фикстуры и примеры — не секреты
+common/src/test/resources/:generic-api-key
+ydb-tickets/src/test/:generic-api-key
+email-poller/src/test/:generic-api-key
+email-sender/src/test/:generic-api-key
+docs/:generic-api-key
+README.md:generic-api-key
+
+# Пример документации .env
+.env.example:generic-api-key

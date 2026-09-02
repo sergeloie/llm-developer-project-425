@@ -162,7 +162,32 @@
                     <artifactId>maven-deploy-plugin</artifactId>
                     <version>3.1.2</version>
                 </plugin>
+                <plugin>
+                    <groupId>com.rudikershaw.gitbuildhook</groupId>
+                    <artifactId>git-build-hook-maven-plugin</artifactId>
+                    <version>3.5.0</version>
+                    <configuration>
+                        <installHooks>
+                            <pre-commit>scripts/githooks/pre-commit</pre-commit>
+                        </installHooks>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>install-git-hooks</id>
+                            <phase>initialize</phase>
+                            <goals>
+                                <goal>install</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
             </plugins>
         </pluginManagement>
+        <plugins>
+            <plugin>
+                <groupId>com.rudikershaw.gitbuildhook</groupId>
+                <artifactId>git-build-hook-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
     </build>
 </project>

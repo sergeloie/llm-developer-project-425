@@ -1,0 +1,3 @@
+# Ensure git hooks stay LF even on Windows
+scripts/githooks/* text eol=lf
+.git/hooks/* text eol=lf
