@@ -1,5 +1,6 @@
-# deploy-email-poller.ps1 — deploy email-poller (helpdesk mail handler) Cloud Function
+# deploy-email-poller.ps1 — deploy email-poller Cloud Function via ZIP with sources
 # Trigger: cron or manual; handles IMAP fetch + AI agent + SMTP reply
+# Принцип: standalone zip (pom.xml + java) с '/' в путях. См. docs/yc-java-function-deploy.md
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -23,30 +24,141 @@ if (-not $FOLDER_ID) { throw "Failed to get folder-id" }
 Write-Host "  SA_ID=$SA_ID"
 Write-Host "  FOLDER_ID=$FOLDER_ID"
 
-# 3. Build common + email-poller (shaded jar)
-Write-Host "Building email-poller..." -ForegroundColor Cyan
-mvn -pl common,email-poller -am package -DskipTests
-if ($LASTEXITCODE -ne 0) { throw "Maven build failed for email-poller" }
+# 3. Build ZIP with sources for Yandex Cloud Builder
+Write-Host "Building email-poller.zip (standalone sources)..." -ForegroundColor Cyan
+$ProjectRoot = Resolve-Path "$PSScriptRoot\..\.."
+$STAGE = Join-Path $env:TEMP "opencode\email-poller-zip"
+$ZIP_PATH = Join-Path $ProjectRoot "email-poller.zip"
 
-# 4. Deploy function version — java21, entryPoint EmailHandler, 512m, 120s timeout for IMAP+LLM
-Write-Host "Deploying email-poller function..." -ForegroundColor Cyan
+if (Test-Path $STAGE) { Remove-Item -Recurse -Force $STAGE }
+New-Item -ItemType Directory -Path "$STAGE\src\main\java\ru\anseranser\mail" -Force | Out-Null
+
+# 3.1 Copy java sources: весь модуль email-poller + нужный файл из common
+Get-ChildItem -Path "$ProjectRoot\email-poller\src\main\java\ru\anseranser\mail\*.java" | ForEach-Object {
+    Copy-Item -Path $_.FullName -Destination "$STAGE\src\main\java\ru\anseranser\mail\"
+}
+Copy-Item -Path "$ProjectRoot\common\src\main\java\ru\anseranser\mail\SmtpEmailSender.java" -Destination "$STAGE\src\main\java\ru\anseranser\mail\" -Force
+
+$files = Get-ChildItem "$STAGE\src\main\java\ru\anseranser\mail\*.java"
+Write-Host "  Copied $($files.Count) java files:"
+$files | ForEach-Object { Write-Host "    $($_.Name)" }
+
+# 3.2 Standalone pom.xml (без parent, без common)
+$pom = @'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>ru.anseranser</groupId>
+  <artifactId>email-poller</artifactId>
+  <version>1.2.0</version>
+  <packaging>jar</packaging>
+  <name>email-poller</name>
+  <description>Email poller Cloud Function with RAG - standalone for Yandex Cloud Builder</description>
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>21</maven.compiler.release>
+    <yc-sdk.version>2.14.0</yc-sdk.version>
+    <angus-mail.version>2.0.5</angus-mail.version>
+    <gson.version>2.11.0</gson.version>
+    <jsoup.version>1.23.1</jsoup.version>
+    <openai.version>4.50.0</openai.version>
+    <junit.version>5.11.0</junit.version>
+    <mockito.version>5.14.2</mockito.version>
+  </properties>
+  <dependencies>
+    <dependency><groupId>com.yandex.cloud</groupId><artifactId>java-sdk-serverless</artifactId><version>${yc-sdk.version}</version></dependency>
+    <dependency><groupId>com.openai</groupId><artifactId>openai-java</artifactId><version>${openai.version}</version></dependency>
+    <dependency><groupId>org.eclipse.angus</groupId><artifactId>angus-mail</artifactId><version>${angus-mail.version}</version></dependency>
+    <dependency><groupId>org.jsoup</groupId><artifactId>jsoup</artifactId><version>${jsoup.version}</version></dependency>
+    <dependency><groupId>com.google.code.gson</groupId><artifactId>gson</artifactId><version>${gson.version}</version></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>${junit.version}</version><scope>test</scope></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-params</artifactId><version>${junit.version}</version><scope>test</scope></dependency>
+    <dependency><groupId>org.mockito</groupId><artifactId>mockito-core</artifactId><version>${mockito.version}</version><scope>test</scope></dependency>
+    <dependency><groupId>org.mockito</groupId><artifactId>mockito-junit-jupiter</artifactId><version>${mockito.version}</version><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin><artifactId>maven-clean-plugin</artifactId><version>3.4.0</version></plugin>
+        <plugin><artifactId>maven-resources-plugin</artifactId><version>3.3.1</version></plugin>
+        <plugin><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version></plugin>
+        <plugin><artifactId>maven-surefire-plugin</artifactId><version>3.3.0</version><configuration><argLine>-Dnet.bytebuddy.experimental=true -XX:+EnableDynamicAgentLoading</argLine></configuration></plugin>
+        <plugin><artifactId>maven-jar-plugin</artifactId><version>3.4.2</version></plugin>
+        <plugin><artifactId>maven-install-plugin</artifactId><version>3.1.2</version></plugin>
+        <plugin><artifactId>maven-deploy-plugin</artifactId><version>3.1.2</version></plugin>
+        <plugin><artifactId>maven-shade-plugin</artifactId><version>3.6.0</version></plugin>
+      </plugins>
+    </pluginManagement>
+    <plugins>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId></plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId>
+        <executions>
+          <execution>
+            <phase>package</phase><goals><goal>shade</goal></goals>
+            <configuration>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer"><mainClass>ru.anseranser.mail.EmailHandler</mainClass></transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+              </transformers>
+              <filters><filter><artifact>*:*</artifact><excludes><exclude>META-INF/*.SF</exclude><exclude>META-INF/*.DSA</exclude><exclude>META-INF/*.RSA</exclude></excludes></filter></filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId></plugin>
+    </plugins>
+  </build>
+</project>
+'@
+Set-Content -Path "$STAGE\pom.xml" -Value $pom -Encoding UTF8
+
+# 3.3 Create ZIP with forward slashes
+if (Test-Path $ZIP_PATH) { Remove-Item -Force $ZIP_PATH }
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$stream = [System.IO.File]::Create($ZIP_PATH)
+$archive = New-Object System.IO.Compression.ZipArchive($stream, [System.IO.Compression.ZipArchiveMode]::Create)
+function Add-FileToZip($archive, $sourcePath, $entryName) {
+  $entry = $archive.CreateEntry($entryName, [System.IO.Compression.CompressionLevel]::Optimal)
+  $es = $entry.Open()
+  $bytes = [System.IO.File]::ReadAllBytes($sourcePath)
+  $es.Write($bytes, 0, $bytes.Length)
+  $es.Close()
+}
+Add-FileToZip $archive "$STAGE\pom.xml" "pom.xml"
+Get-ChildItem "$STAGE\src\main\java\ru\anseranser\mail\*.java" | ForEach-Object {
+    $rel = "src/main/java/ru/anseranser/mail/$($_.Name)"
+    Add-FileToZip $archive $_.FullName $rel
+}
+$archive.Dispose()
+$stream.Close()
+$stream.Dispose()
+Write-Host "  ZIP created: $ZIP_PATH ($((Get-Item $ZIP_PATH).Length) bytes)" -ForegroundColor Green
+$z = [System.IO.Compression.ZipFile]::OpenRead($ZIP_PATH)
+$z.Entries | ForEach-Object { Write-Host "    $($_.FullName)" }
+$z.Dispose()
+
+# 4. Deploy function version — FQN entrypoint
+Write-Host "Deploying email-poller function from ZIP..." -ForegroundColor Cyan
 yc serverless function version create `
     --function-name email-poller `
     --runtime java21 `
     --entrypoint ru.anseranser.mail.EmailHandler `
-    --memory 512m `
+    --memory 512MB `
     --execution-timeout 120s `
-    --source-path email-poller/target/email-poller-1.2.0.jar `
+    --source-path $ZIP_PATH `
     --service-account-id $SA_ID `
     --environment IMAP_HOST=$env:IMAP_HOST,IMAP_USER=$env:IMAP_USER,SMTP_HOST=$env:SMTP_HOST,SMTP_PORT=$env:SMTP_PORT,SMTP_USER=$env:SMTP_USER,HELPDESK_MAILBOX=$env:HELPDESK_MAILBOX,YDB_ENDPOINT=$env:YDB_ENDPOINT,YDB_DATABASE=$env:YDB_DATABASE,AGENT_ID=$env:AGENT_ID,ORGANIZATION_ID=$env:ORGANIZATION_ID,MCP_SERVER_URL=$env:MCP_SERVER_URL,VECTOR_STORE_ID=$env:VECTOR_STORE_ID `
-    --secret environmentVariable=IMAP_PASSWORD,sourceId=imap-password,versionId=latest `
-    --secret environmentVariable=SMTP_PASSWORD,sourceId=smtp-password,versionId=latest `
-    --secret environmentVariable=YANDEX_API_KEY,sourceId=yandex-api-key,versionId=latest `
-    --secret environmentVariable=YDB_TOKEN,sourceId=ydb-token,versionId=latest
+    --secret environment-variable=IMAP_PASSWORD,name=imap-password,version-id=latest `
+    --secret environment-variable=SMTP_PASSWORD,name=smtp-password,version-id=latest `
+    --secret environment-variable=YANDEX_API_KEY,name=yandex-api-key,version-id=latest `
+    --secret environment-variable=YDB_TOKEN,name=ydb-token,version-id=latest
 
 if ($LASTEXITCODE -ne 0) { throw "yc function version create failed for email-poller" }
 
-# 5. Fetch CF_ID for verification (not used in templates but useful for logs)
+# 5. Fetch CF_ID for verification
 $CF_ID = (yc serverless function get --name email-poller --format json | ConvertFrom-Json).id
 Write-Host "  EMAIL_POLLER_CF_ID=$CF_ID" -ForegroundColor Cyan
 
