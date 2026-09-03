@@ -58,15 +58,15 @@ AI-агент службы поддержки на Yandex Cloud: принима�
 mvn clean verify
 ```
 
-Результат последнего прогона (03.09.2026, `BUILD SUCCESS`, 67s):
+Результат последнего прогона (03.09.2026 20:41 +05, `BUILD SUCCESS`, 49.5s):
 
 ```
 helpdesk-parent 1.0.0 .... SUCCESS
 common 1.0.0 ............ SUCCESS  Tests run: 44, Failures: 0  # +6 LLM mock (InjectionClassifierLlmTest) + SMTP_DEBUG
-email-poller 1.2.0 ....... SUCCESS  Tests run: 20, Failures: 0  # +2 AgentResult token tests
+email-poller 1.2.0 ....... SUCCESS  Tests run: 20, Failures: 0  # +2 AgentResult token tests (TOKENS_USAGE/EMAIL_TOKENS)
 ydb-tickets 1.1.0 ........ SUCCESS  Tests run: 42, Failures: 0
 email-sender 1.0.0 ....... SUCCESS  Tests run: 12, Failures: 0
-BUILD SUCCESS — всего 118 тестов
+BUILD SUCCESS — всего 118 тестов (44+42+20+12)
 ```
 
 Инфраструктура `infra/` не собирается Maven — шаблоны подставляются скриптами.
@@ -146,21 +146,26 @@ yc config set folder-id <FOLDER_ID>
 
 ### Работает ✅
 
-- [x] `mvn clean verify` в корне — все 4 модуля, 108 тестов зелёные, shaded jar собираются
-- [x] `common`: `PiiMasker`/`InjectionClassifier`/`YdbTransportFactory`/`SmtpEmailSender`/`JsonEventParser` — 36 тестов
-- [x] `email-poller`: `EmailHandler` (UNSEEN via `FlagTerm`, `EmailTextExtractor` text/plain > html + Jsoup), `AgentClient` — один `file_search` (VECTOR_STORE_ID) + один `mcp` (NEVER), 18 тестов
+- [x] `mvn clean verify` в корне — все 4 модуля, 118 тестов зелёные (44+42+20+12), shaded jar собираются
+- [x] `common`: `PiiMasker`/`InjectionClassifier`/`YdbTransportFactory`/`SmtpEmailSender`/`JsonEventParser` — 44 теста (+6 `InjectionClassifierLlmTest` c `yandexgpt-lite` mock + `HttpServer`, 6 `SmtpEmailSenderTest` c `SMTP_DEBUG`)
+- [x] `email-poller`: `EmailHandler` (UNSEEN via `FlagTerm`, `finally markAsSeen` — M1, `EmailTextExtractor` text/plain > html + Jsoup), `AgentClient` — один `file_search` (VECTOR_STORE_ID `fvtn72d9ke0vulslnq37`) + один `mcp` (NEVER), 20 тестов (+`AgentResult` c `TOKENS_USAGE`/`EMAIL_TOKENS` — P1)
 - [x] `ydb-tickets`: парсит 3 источника (direct / API Gateway httpMethod+body / MCP Hub по ключам), `YdbClient` (`TxControl.serializableRw`, `$id` params), PII + injection, 42 теста
 - [x] `email-sender`: `{"subject","body"}` (строка/массив/объект → pretty JSON) → `HELPDESK_MAILBOX`/`OPERATOR_EMAIL` (алиас, S5), 12 тестов
 - [x] `infra`: `schema.sql` (tickets+messages, `tickets_by_user`), `mcp-tools.yaml.template` / `daily-escalation.yaml.template` (`yawl: 0.2`, `database`, `functionId` — шаблоны `{{...}}`), `deploy-*.ps1` берут `.env` + `yc config`
 - [x] Smoke без реального YC/IMAP покрыт моками: `EventDispatcher` все 3 источника, PII маскируется, injection блокируется (`YdbTicketsHandlerTest` + `SecurityTest`)
 
-### Не работает / требует ручных шагов ⚠️
+### Проверено вручную на реальном YC (b1gvnmb6q5tj79tmk27j) 03.09.2026 ✅
 
-- [ ] Реальный `yc serverless function invoke ydb-tickets` — требует развёрнутого Cloud + YDB + секретов (уже покрыто unit-моками, ручной smoke — по `step9/README.md`)
-- [ ] `email-poller` → реальный IMAP/SMTP — требует валидных `IMAP_*`/`SMTP_*` и cron-триггера функции
-- [ ] `file_search` RAG — требует загрузки `step7/docs/*.md` в `vector-store` (`VECTOR_STORE_ID`) вручную
-- [ ] Workflow `daily-escalation` — требует уже задеплоенного `email-sender` (CF_ID) и ролей `ydb.editor`/`ai.assistants.editor`
-- [ ] Подсчёт токенов `usage.input_tokens ≈ messages.tokens_in` (≤10%) — проверяется вручную после реального вызова `Responses API`
+- [x] `yc serverless function invoke ydb-tickets` — PII `+7 (***) ***-**-67`/`[email]`/`****-1111` + injection `{"error":"Запрос заблокирован модерацией"}` — `ALERT_INJECTION_BLOCKED`
+- [x] `email-poller` → IMAP `serge.loie@yandex.ru` (UNSEEN) → `AgentClient` → SMTP reply — `2 mail(s) done` + `TOKENS_USAGE`/`EMAIL_TOKENS`, триггер `email-poller-trigger` cron `0/1 * * * ? *` в UI (на паузе)
+- [x] `file_search` RAG (`VECTOR_STORE_ID=fvtn72d9ke0vulslnq37`) — `"Как оформить командировку?"` → ответ с `*Источник: «Командировки»*` (7 шагов, RAG ok); вне базы `"Как переименовать доменное имя?"` → fallback/ `list-my-tickets`
+- [x] Workflow `daily-escalation` `dfqtbm1u6rm3494bud8a` yawl 0.2 `PT24H` (тест `PT1H`) — `FINISHED 1.6s {"tickets":[]}` / `FINISHED 8.6s {"status":"sent"}` c `summary`/`recommended_action`, `functionCall` → `email-sender d4evk9lljvqkg2ffqkjk`
+- [x] Токены `Responses API usage` → `TOKENS_USAGE`/`EMAIL_TOKENS` — сверка с `messages.tokens_in/out` ≤10% (см. `docs/YC_JAVA_AND_WORKFLOW_DEPLOY_HANDBOOK.md` §4)
+
+### Требует ручных шагов / ограничения ⚠️
+
+- [ ] Триггеры в UI на паузе — включить `Resume` для прод-опроса
+- [ ] `workflow schedule "0 9 * * ? *"` `Europe/Moscow` — сейчас запуск ручной (`execution start`), добавить `schedule` при необходимости
 - [ ] Мультиязычность — только русский
 
 ## Что попробовать (4 промпта)
