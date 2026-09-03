@@ -2,6 +2,7 @@
 /.idea/
 token.txt
 *.iml
+HANDOFF*
 
 ### Java template
 # Compiled class file
