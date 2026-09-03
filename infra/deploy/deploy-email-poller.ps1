@@ -5,11 +5,17 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # 1. Load .env into env:
+# P1 fix: robust parsing via IndexOf('=') — handles passwords/base64 with '='
 Write-Host "Loading .env..." -ForegroundColor Cyan
 Get-Content -Path ".env" | ForEach-Object {
-    if ($_ -match "^\s*([^#][^=]+?)\s*=\s*(.*)\s*$") {
-        $key = $Matches[1].Trim()
-        $value = $Matches[2].Trim() -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1'
+    $line = $_.Trim()
+    if ($line -eq "" -or $line.StartsWith("#")) { return }
+    $idx = $line.IndexOf('=')
+    if ($idx -le 0) { return }
+    $key = $line.Substring(0, $idx).Trim()
+    $value = $line.Substring($idx + 1).Trim()
+    $value = $value -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1'
+    if ($key -ne "") {
         Set-Item -Path "env:$key" -Value $value
         Write-Host "  env:$key set"
     }
@@ -140,8 +146,18 @@ $z = [System.IO.Compression.ZipFile]::OpenRead($ZIP_PATH)
 $z.Entries | ForEach-Object { Write-Host "    $($_.FullName)" }
 $z.Dispose()
 
-# 4. Deploy function version — FQN entrypoint
+# 4. Deploy function version — FQN entrypoint (create function if not exists)
 Write-Host "Deploying email-poller function from ZIP..." -ForegroundColor Cyan
+try {
+    $oldEA = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    $exists = yc serverless function get --name email-poller --format json 2>&1
+    $ErrorActionPreference = $oldEA
+} catch { $exists = $null; $ErrorActionPreference = "Continue" }
+if ($LASTEXITCODE -ne 0 -or -not $exists -or $exists -match "not found") {
+    Write-Host "  Function email-poller not found, creating..." -ForegroundColor Yellow
+    yc serverless function create --name email-poller --description "HelpDesk email poller IMAP->RAG->MCP->SMTP"
+    if ($LASTEXITCODE -ne 0) { throw "yc function create failed for email-poller" }
+}
 yc serverless function version create `
     --function-name email-poller `
     --runtime java21 `
@@ -151,10 +167,9 @@ yc serverless function version create `
     --source-path $ZIP_PATH `
     --service-account-id $SA_ID `
     --environment IMAP_HOST=$env:IMAP_HOST,IMAP_USER=$env:IMAP_USER,SMTP_HOST=$env:SMTP_HOST,SMTP_PORT=$env:SMTP_PORT,SMTP_USER=$env:SMTP_USER,HELPDESK_MAILBOX=$env:HELPDESK_MAILBOX,YDB_ENDPOINT=$env:YDB_ENDPOINT,YDB_DATABASE=$env:YDB_DATABASE,AGENT_ID=$env:AGENT_ID,ORGANIZATION_ID=$env:ORGANIZATION_ID,MCP_SERVER_URL=$env:MCP_SERVER_URL,VECTOR_STORE_ID=$env:VECTOR_STORE_ID `
-    --secret environment-variable=IMAP_PASSWORD,name=imap-password,version-id=latest `
-    --secret environment-variable=SMTP_PASSWORD,name=smtp-password,version-id=latest `
-    --secret environment-variable=YANDEX_API_KEY,name=yandex-api-key,version-id=latest `
-    --secret environment-variable=YDB_TOKEN,name=ydb-token,version-id=latest
+    --secret environment-variable=IMAP_PASSWORD,name=email-credentials,key=password `
+    --secret environment-variable=SMTP_PASSWORD,name=email-credentials,key=password `
+    --secret environment-variable=YANDEX_API_KEY,name=agent-api-key,key=agent-api-key
 
 if ($LASTEXITCODE -ne 0) { throw "yc function version create failed for email-poller" }
 

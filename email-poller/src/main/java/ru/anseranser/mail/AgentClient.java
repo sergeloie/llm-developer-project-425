@@ -50,6 +50,9 @@ public class AgentClient {
                 null);
     }
 
+    /** P1 fix: DTO with usage — required for step 9 token verification (usage ≈ messages.tokens_in/out). */
+    public record AgentResult(String text, long inputTokens, long outputTokens, String responseId, long latencyMs) {}
+
     /**
      * Sends a request to the LLM agent and returns the text response.
      * Builds tools list with optional file_search and mandatory mcp.
@@ -58,6 +61,16 @@ public class AgentClient {
      * @return the agent's text response
      */
     public String getResponse(String request) {
+        return getResponseWithUsage(request).text();
+    }
+
+    /**
+     * P1 fix: variant that exposes usage + latency for explicit token accounting.
+     * Measures wall-clock latency, extracts usage.inputTokens/outputTokens from Responses API.
+     * Fail-open: if usage missing, returns 0/0.
+     */
+    public AgentResult getResponseWithUsage(String request) {
+        long start = System.currentTimeMillis();
         OpenAIClient client = clientOverride != null ? clientOverride : OpenAIOkHttpClient.builder()
                 .apiKey(apiKey)
                 .baseUrl("https://ai.api.cloud.yandex.net/v1")
@@ -91,16 +104,20 @@ public class AgentClient {
                 .build();
 
         Response response = client.responses().create(params);
+        long latency = System.currentTimeMillis() - start;
         String modelResponse = response.output().getLast().message().get().content().getFirst().asOutputText().text();
+        long in = response.usage().map(u -> u.inputTokens()).orElse(0L);
+        long out = response.usage().map(u -> u.outputTokens()).orElse(0L);
 
-        System.out.printf("Response id: %s. Request: %s. Response: %s. Input Tokens: %d. Output Tokens: %d.%s",
+        System.out.printf("Response id: %s. Request: %s. Response: %s. Input Tokens: %d. Output Tokens: %d. Latency: %dms%s",
                 response.id(),
                 request,
                 modelResponse,
-                response.usage().get().inputTokens(),
-                response.usage().get().outputTokens(),
+                in, out, latency,
                 System.lineSeparator());
+        // Explicit token log for step 9 verification: usage ≈ messages.tokens_in/out (≤10%)
+        System.out.printf("TOKENS_USAGE input=%d output=%d latency=%d responseId=%s%s", in, out, latency, response.id(), System.lineSeparator());
 
-        return modelResponse;
+        return new AgentResult(modelResponse, in, out, response.id(), latency);
     }
 }

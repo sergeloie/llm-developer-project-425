@@ -73,6 +73,11 @@ public class EmailHandler implements YcFunction<String, String> {
             }
         } catch (MessagingException e) {
             System.out.println("Failed to connect or fetch emails from IMAP server: " + e.getMessage());
+        } finally {
+            try {
+                receiver.disconnect();
+            } catch (Exception ignored) {
+            }
         }
         return mailCount + " mail(s) done";
     }
@@ -80,12 +85,17 @@ public class EmailHandler implements YcFunction<String, String> {
     /**
      * Processes a single email message: extracts text, calls the agent,
      * sends the reply, and marks the message as seen.
+     * <p>
+     * M1 fix: message is marked Seen in finally to avoid poller loop on poison messages
+     * (see step 4 подсказка: при ошибке всё равно маркируйте \Seen).
      *
      * @return 1 if the message was processed successfully, 0 otherwise
      */
     private int processMessage(Message message, int index) {
+        String from = "unknown";
+        boolean success = false;
         try {
-            String from = getAddress(message.getFrom()[0]);
+            from = getAddress(message.getFrom()[0]);
             String subject = message.getSubject();
             System.out.printf("Message #%d, from: %s, subject: %s%s", index + 1, from, subject, System.lineSeparator());
 
@@ -96,9 +106,17 @@ public class EmailHandler implements YcFunction<String, String> {
             }
 
             String jsonRequest = new Gson().toJson(Map.of("user_id", from, "text", body));
-            String response = agent.getResponse(jsonRequest);
+            // P1 fix: use getResponseWithUsage to capture tokens/latency for observability (step 9)
+            AgentClient.AgentResult result = agent.getResponseWithUsage(jsonRequest);
+            String response = result.text();
             sender.send(from, "Agent answer", response);
-            receiver.markAsSeen(message);
+            // Log token/latency explicitly for comparison with messages.tokens_in/out (≤10% rule)
+            System.out.printf("EMAIL_TOKENS user_id=%s input=%d output=%d latency=%d responseId=%s%s",
+                    from, result.inputTokens(), result.outputTokens(), result.latencyMs(), result.responseId(), System.lineSeparator());
+            // Note: explicit persist via append-message with tokens requires ticket_id correlation.
+            // Agent already calls create-ticket/append-message via MCP; usage is available here for metrics
+            // and can be forwarded to YDB via ydb-tickets append-message if ticket_id is known.
+            success = true;
             return 1;
         } catch (MessagingException e) {
             System.out.println("Failed to send reply email: " + e.getMessage());
@@ -109,6 +127,17 @@ public class EmailHandler implements YcFunction<String, String> {
         } catch (Exception e) {
             System.out.println("Failed to process email: " + e.getMessage());
             return 0;
+        } finally {
+            try {
+                receiver.markAsSeen(message);
+                if (!success) {
+                    System.out.println("Marked poison/failed message as Seen to avoid loop: from=" + from);
+                }
+            } catch (MessagingException me) {
+                System.out.println("Failed to mark message as Seen: " + me.getMessage());
+            } catch (Exception ex) {
+                System.out.println("Unexpected error marking Seen: " + ex.getMessage());
+            }
         }
     }
 

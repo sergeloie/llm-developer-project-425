@@ -90,9 +90,11 @@ src/main/java/ru/anseranser/mail/SmtpEmailSender.java
 --secret PROPERTY=VALUE,...     # см. ниже
 ```
 
-* `--secret` — **только kebab-case**: `environment-variable`, `name` или `id`, `version-id`, `key`. Не `environmentVariable`, не `sourceId`, не `versionId`! Пример:
+* `--secret` — **только kebab-case**: `environment-variable`, `name` или `id`, `version-id`, `key`. Не `environmentVariable`, не `sourceId`, не `versionId`! Примеры (проект использует один секрет `email-credentials` с `key=password` на обе переменные):
   ```bash
-  --secret environment-variable=SMTP_PASSWORD,name=smtp-password,version-id=latest
+  --secret environment-variable=IMAP_PASSWORD,name=email-credentials,key=password,version-id=latest
+  --secret environment-variable=SMTP_PASSWORD,name=email-credentials,key=password,version-id=latest
+  --secret environment-variable=YANDEX_API_KEY,name=yandex-api-key,version-id=latest
   ```
 * `--memory` — писать `256MB`, `512MB`, а не `256m`. Дока: `byteSize` с примерами `'128MB', '1GB'`.
 * Для ZIP-архива >3.5МБ использовать `--package-bucket-name` / `--package-object-name` вместо `--source-path` (см. `function.md:27`).

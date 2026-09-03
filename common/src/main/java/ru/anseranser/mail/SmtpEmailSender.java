@@ -55,7 +55,13 @@ public class SmtpEmailSender {
                 return new PasswordAuthentication(smtpUser, smtpPassword);
             }
         });
-        session.setDebugOut(System.out);
+        // S6 fix: SMTP debug только по флагу SMTP_DEBUG=true (иначе спам в логах)
+        String debugFlag = System.getenv("SMTP_DEBUG");
+        boolean debug = "true".equalsIgnoreCase(debugFlag) || "1".equals(debugFlag);
+        if (debug) {
+            session.setDebug(true);
+            session.setDebugOut(System.out);
+        }
 
         Message message = new MimeMessage(session);
         message.setFrom(new InternetAddress(fromAddress));

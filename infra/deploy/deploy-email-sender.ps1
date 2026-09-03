@@ -7,11 +7,17 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # 1. Load .env into env: (ignore comments and empty lines)
+# P1 fix: robust parsing via IndexOf('=') — handles passwords/base64 with '='
 Write-Host "Loading .env..." -ForegroundColor Cyan
 Get-Content -Path ".env" | ForEach-Object {
-    if ($_ -match "^\s*([^#][^=]+?)\s*=\s*(.*)\s*$") {
-        $key = $Matches[1].Trim()
-        $value = $Matches[2].Trim() -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1'
+    $line = $_.Trim()
+    if ($line -eq "" -or $line.StartsWith("#")) { return }
+    $idx = $line.IndexOf('=')
+    if ($idx -le 0) { return }
+    $key = $line.Substring(0, $idx).Trim()
+    $value = $line.Substring($idx + 1).Trim()
+    $value = $value -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1'
+    if ($key -ne "") {
         Set-Item -Path "env:$key" -Value $value
         Write-Host "  env:$key set"
     }
@@ -166,6 +172,11 @@ try {
 } catch {}
 
 # 5. Deploy function version — входная точка с полным пакетом
+# S5 fix: передаём оба алиаса HELPDESK_MAILBOX и OPERATOR_EMAIL (код поддерживает оба)
+$mailboxEnv = $env:HELPDESK_MAILBOX
+if (-not $mailboxEnv -or $mailboxEnv.Trim() -eq "") { $mailboxEnv = $env:OPERATOR_EMAIL }
+if (-not $mailboxEnv) { $mailboxEnv = $env:SMTP_USER }
+Write-Host "  Resolved mailbox: $mailboxEnv (HELPDESK_MAILBOX/OPERATOR_EMAIL)" -ForegroundColor Cyan
 Write-Host "Deploying email-sender function from ZIP..." -ForegroundColor Cyan
 yc serverless function version create `
     --function-name email-sender `
@@ -175,8 +186,8 @@ yc serverless function version create `
     --execution-timeout 30s `
     --source-path $ZIP_PATH `
     --service-account-id $SA_ID `
-    --environment SMTP_HOST=$env:SMTP_HOST,SMTP_PORT=$env:SMTP_PORT,SMTP_USER=$env:SMTP_USER,HELPDESK_MAILBOX=$env:HELPDESK_MAILBOX `
-    --secret environment-variable=SMTP_PASSWORD,name=smtp-password,version-id=latest
+    --environment SMTP_HOST=$env:SMTP_HOST,SMTP_PORT=$env:SMTP_PORT,SMTP_USER=$env:SMTP_USER,HELPDESK_MAILBOX=$mailboxEnv,OPERATOR_EMAIL=$mailboxEnv `
+    --secret environment-variable=SMTP_PASSWORD,name=email-credentials,key=password
 
 if ($LASTEXITCODE -ne 0) { throw "yc function version create failed for email-sender" }
 

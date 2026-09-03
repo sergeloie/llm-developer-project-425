@@ -46,8 +46,8 @@ class EmailHandlerTest {
         Message message = mockMessage("user@example.com", "Hello");
         when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{message});
         when(extractor.extractPlainText(message)).thenReturn("Hello body");
-        when(agent.getResponse(argThat(jsonContains("user@example.com", "Hello body"))))
-                .thenReturn("Agent reply");
+        when(agent.getResponseWithUsage(argThat(jsonContains("user@example.com", "Hello body"))))
+                .thenReturn(new AgentClient.AgentResult("Agent reply", 10L, 20L, "resp_1", 123L));
 
         String result = handler.handle(null, null);
 
@@ -85,10 +85,10 @@ class EmailHandlerTest {
         when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1, msg2});
         when(extractor.extractPlainText(msg1)).thenReturn("Body 1");
         when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
-        when(agent.getResponse(argThat(jsonContains("user1@example.com", "Body 1"))))
+        when(agent.getResponseWithUsage(argThat(jsonContains("user1@example.com", "Body 1"))))
                 .thenThrow(new RuntimeException("Agent unavailable"));
-        when(agent.getResponse(argThat(jsonContains("user2@example.com", "Body 2"))))
-                .thenReturn("Reply 2");
+        when(agent.getResponseWithUsage(argThat(jsonContains("user2@example.com", "Body 2"))))
+                .thenReturn(new AgentClient.AgentResult("Reply 2", 5L, 5L, "r2", 10L));
 
         String result = handler.handle(null, null);
 
@@ -105,18 +105,19 @@ class EmailHandlerTest {
         when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1, msg2});
         when(extractor.extractPlainText(msg1)).thenReturn("Body 1");
         when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
-        when(agent.getResponse(argThat(jsonContains("user1@example.com", "Body 1"))))
-                .thenReturn("Reply 1");
+        when(agent.getResponseWithUsage(argThat(jsonContains("user1@example.com", "Body 1"))))
+                .thenReturn(new AgentClient.AgentResult("Reply 1", 10L, 10L, "r1", 5L));
         doThrow(new MessagingException("SMTP send failed"))
                 .when(sender).send("user1@example.com", "Agent answer", "Reply 1");
-        when(agent.getResponse(argThat(jsonContains("user2@example.com", "Body 2"))))
-                .thenReturn("Reply 2");
+        when(agent.getResponseWithUsage(argThat(jsonContains("user2@example.com", "Body 2"))))
+                .thenReturn(new AgentClient.AgentResult("Reply 2", 10L, 10L, "r2", 5L));
 
         String result = handler.handle(null, null);
 
         assertEquals("1 mail(s) done", result);
         verify(receiver).markAsSeen(msg2);
-        verify(receiver, never()).markAsSeen(msg1);
+        // M1 fix: even failed message is marked Seen to avoid poller loop
+        verify(receiver).markAsSeen(msg1);
     }
 
     @Test
@@ -127,14 +128,15 @@ class EmailHandlerTest {
         when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1, msg2});
         when(extractor.extractPlainText(msg1)).thenThrow(new IOException("Parse error"));
         when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
-        when(agent.getResponse(argThat(jsonContains("user2@example.com", "Body 2"))))
-                .thenReturn("Reply 2");
+        when(agent.getResponseWithUsage(argThat(jsonContains("user2@example.com", "Body 2"))))
+                .thenReturn(new AgentClient.AgentResult("Reply 2", 5L, 5L, "r2", 10L));
 
         String result = handler.handle(null, null);
 
         assertEquals("1 mail(s) done", result);
         verify(sender).send("user2@example.com", "Agent answer", "Reply 2");
         verify(receiver).markAsSeen(msg2);
+        verify(receiver).markAsSeen(msg1);
     }
 
     @Test
@@ -145,10 +147,10 @@ class EmailHandlerTest {
         when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{msg1, msg2});
         when(extractor.extractPlainText(msg1)).thenReturn("Body 1");
         when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
-        when(agent.getResponse(argThat(jsonContains("user1@example.com", "Body 1"))))
+        when(agent.getResponseWithUsage(argThat(jsonContains("user1@example.com", "Body 1"))))
                 .thenThrow(new RuntimeException("Agent unavailable"));
-        when(agent.getResponse(argThat(jsonContains("user2@example.com", "Body 2"))))
-                .thenReturn("Reply 2");
+        when(agent.getResponseWithUsage(argThat(jsonContains("user2@example.com", "Body 2"))))
+                .thenReturn(new AgentClient.AgentResult("Reply 2", 5L, 5L, "r2", 10L));
 
         String result = handler.handle(null, null);
 
@@ -168,6 +170,8 @@ class EmailHandlerTest {
         assertEquals("0 mail(s) done", result);
         verifyNoInteractions(agent);
         verifyNoInteractions(sender);
+        // M1 fix: empty body also marked Seen
+        verify(receiver).markAsSeen(msg1);
     }
 
     @Test

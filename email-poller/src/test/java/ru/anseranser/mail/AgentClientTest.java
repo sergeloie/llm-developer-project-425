@@ -136,4 +136,44 @@ class AgentClientTest {
         assertEquals(1, tools.size());
         assertTrue(tools.get(0).isMcp());
     }
+
+    @Test
+    void getResponseWithUsage_returnsTokensAndLatency() {
+        Response mockResp = mockResponse("Agent reply");
+        when(openAIClient.responses()).thenReturn(responseService);
+        when(responseService.create(any(ResponseCreateParams.class))).thenReturn(mockResp);
+
+        AgentClient client = new AgentClient("key", "agent-1", "org", "https://mcp.example.com", "vs_123", openAIClient);
+        AgentClient.AgentResult result = client.getResponseWithUsage("test");
+
+        assertEquals("Agent reply", result.text());
+        assertEquals(10L, result.inputTokens());
+        assertEquals(20L, result.outputTokens());
+        assertEquals("resp_123", result.responseId());
+        assertTrue(result.latencyMs() >= 0);
+    }
+
+    @Test
+    void getResponseWithUsage_missingUsage_returnsZero() {
+        Response mockResp = mock(Response.class);
+        lenient().when(mockResp.id()).thenReturn("resp_456");
+        ResponseOutputItem outputItem = mock(ResponseOutputItem.class);
+        ResponseOutputMessage message = mock(ResponseOutputMessage.class);
+        ResponseOutputMessage.Content content = mock(ResponseOutputMessage.Content.class);
+        ResponseOutputText outputText = mock(ResponseOutputText.class);
+        when(outputText.text()).thenReturn("hi");
+        when(content.asOutputText()).thenReturn(outputText);
+        when(message.content()).thenReturn(List.of(content));
+        when(outputItem.message()).thenReturn(Optional.of(message));
+        lenient().when(mockResp.output()).thenReturn(List.of(outputItem));
+        lenient().when(mockResp.usage()).thenReturn(Optional.empty());
+
+        when(openAIClient.responses()).thenReturn(responseService);
+        when(responseService.create(any(ResponseCreateParams.class))).thenReturn(mockResp);
+
+        AgentClient client = new AgentClient("key", "a", "o", "https://mcp", null, openAIClient);
+        AgentClient.AgentResult result = client.getResponseWithUsage("test");
+        assertEquals(0L, result.inputTokens());
+        assertEquals(0L, result.outputTokens());
+    }
 }

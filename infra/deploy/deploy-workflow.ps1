@@ -4,11 +4,17 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # 1. Load .env into env:
+# P1 fix: robust parsing via IndexOf('=') — handles passwords/base64 with '='
 Write-Host "Loading .env..." -ForegroundColor Cyan
 Get-Content -Path ".env" | ForEach-Object {
-    if ($_ -match "^\s*([^#][^=]+?)\s*=\s*(.*)\s*$") {
-        $key = $Matches[1].Trim()
-        $value = $Matches[2].Trim() -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1'
+    $line = $_.Trim()
+    if ($line -eq "" -or $line.StartsWith("#")) { return }
+    $idx = $line.IndexOf('=')
+    if ($idx -le 0) { return }
+    $key = $line.Substring(0, $idx).Trim()
+    $value = $line.Substring($idx + 1).Trim()
+    $value = $value -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1'
+    if ($key -ne "") {
         Set-Item -Path "env:$key" -Value $value
         Write-Host "  env:$key set"
     }
@@ -43,38 +49,64 @@ Write-Host "  EMAIL_SENDER_CF_ID=$EMAIL_SENDER_CF_ID"
 Write-Host "Rendering daily-escalation workflow..." -ForegroundColor Cyan
 $templatePath = "infra/workflow/daily-escalation.yaml.template"
 $renderedPath = "infra/workflow/daily-escalation.yaml"
-$template = Get-Content -Path $templatePath -Raw
+# Fix encoding: Get-Content -Raw без -Encoding читает кириллицу как ANSI -> кракозябры. Читаем строго UTF8.
+$fullTemplatePath = Join-Path (Get-Location) $templatePath
+$template = [System.IO.File]::ReadAllText($fullTemplatePath, [System.Text.Encoding]::UTF8)
 # Replace YDB_DATABASE and EMAIL_SENDER_CF_ID placeholders
 $rendered = $template -replace "{{YDB_DATABASE}}", $YDB_DATABASE
 $rendered = $rendered -replace "{{EMAIL_SENDER_CF_ID}}", $EMAIL_SENDER_CF_ID
-Set-Content -Path $renderedPath -Value $rendered -Encoding utf8
-Write-Host "  Rendered $renderedPath"
+# Fix BOM: Set-Content -Encoding utf8 в PS5 пишет с BOM (EF BB BF) -> Invalid specification. Пишем без BOM.
+$fullPath = Join-Path (Get-Location) $renderedPath
+[System.IO.File]::WriteAllText($fullPath, $rendered, [System.Text.UTF8Encoding]::new($false))
+Write-Host "  Rendered $renderedPath (utf8NoBOM, utf8 read)"
 
 # 6. Ensure workflow SA has required roles (ydb.editor, ai.assistants.editor, etc.)
-#    These bindings are idempotent; yc will skip if already granted.
+#    Idempotent; if authenticated as SA without admin rights, this will PermissionDenied - warn and continue.
 Write-Host "Ensuring workflow SA roles..." -ForegroundColor Cyan
 $roles = @("ydb.editor", "ai.assistants.editor", "ai.languageModels.user")
 foreach ($role in $roles) {
-    yc resource-manager folder add-access-binding --id $FOLDER_ID --service-account-id $SA_ID --role $role 2>$null
+    try {
+        $oldEA = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        yc resource-manager folder add-access-binding --id $FOLDER_ID --service-account-id $SA_ID --role $role 2>&1 | Out-Null
+        $code = $LASTEXITCODE
+        $ErrorActionPreference = $oldEA
+        if ($code -ne 0) { Write-Host "  WARN: cannot add $role (already granted or no admin) - continue" -ForegroundColor Yellow }
+        else { Write-Host "  Ensured $role" -ForegroundColor Green }
+    } catch {
+        Write-Host "  WARN: add $role failed: $($_.Exception.Message) - continue" -ForegroundColor Yellow
+        $ErrorActionPreference = "Continue"
+    }
 }
 
 # 7. Create or update workflow (YaWL 0.2)
 #    Workflow name: daily-escalation
 Write-Host "Deploying workflow daily-escalation..." -ForegroundColor Cyan
 $workflowName = "daily-escalation"
-$existingWorkflow = yc serverless workflow get --name $workflowName --format json 2>$null | ConvertFrom-Json
-if ($existingWorkflow) {
-    yc serverless workflow update --name $workflowName --yaml-spec $renderedPath
-    Write-Host "  Workflow updated."
+$existingWorkflow = $null
+try {
+    $oldEA2 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    $json = yc serverless workflow get --name $workflowName --format json 2>&1
+    $ErrorActionPreference = $oldEA2
+    if ($LASTEXITCODE -eq 0 -and $json) { $existingWorkflow = $json | ConvertFrom-Json }
+} catch { $existingWorkflow = $null; $ErrorActionPreference = "Continue" }
+if ($null -ne $existingWorkflow) {
+    try {
+        $hasId = $false
+        if ($existingWorkflow.workflow -and $existingWorkflow.workflow.id) { $hasId = $true }
+        elseif ($existingWorkflow.id) { $hasId = $true }
+    } catch { $hasId = $false }
+    if ($hasId) { Write-Host "  Workflow exists, updating..." -ForegroundColor Yellow; yc serverless workflow update --name $workflowName --yaml-spec $renderedPath; Write-Host "  Workflow updated." }
+    else { Write-Host "  Workflow not found, creating..." -ForegroundColor Yellow; yc serverless workflow create --name $workflowName --yaml-spec $renderedPath --service-account-id $SA_ID; Write-Host "  Workflow created." }
 } else {
+    Write-Host "  Workflow not found, creating..." -ForegroundColor Yellow
     yc serverless workflow create --name $workflowName --yaml-spec $renderedPath --service-account-id $SA_ID
     Write-Host "  Workflow created."
 }
 if ($LASTEXITCODE -ne 0) { throw "Workflow deploy failed" }
 
-# 8. Grant workflow executor/viewer to SA (if needed for invocation)
-yc serverless workflow add-access-binding --name $workflowName --service-account-id $SA_ID --role serverless.workflows.executor 2>$null
-yc serverless workflow add-access-binding --name $workflowName --service-account-id $SA_ID --role serverless.workflows.viewer 2>$null
+# 8. Grant workflow executor/viewer to SA (non-fatal if no admin)
+try { $oldEA3=$ErrorActionPreference; $ErrorActionPreference="Continue"; yc serverless workflow add-access-binding --name $workflowName --service-account-id $SA_ID --role serverless.workflows.executor 2>&1 | Out-Null; $ErrorActionPreference=$oldEA3 } catch { $ErrorActionPreference="Continue" }
+try { $oldEA4=$ErrorActionPreference; $ErrorActionPreference="Continue"; yc serverless workflow add-access-binding --name $workflowName --service-account-id $SA_ID --role serverless.workflows.viewer 2>&1 | Out-Null; $ErrorActionPreference=$oldEA4 } catch { $ErrorActionPreference="Continue" }
 
 Write-Host "Workflow daily-escalation deploy finished." -ForegroundColor Green
 Write-Host "  Spec: $renderedPath yawl: '0.2' start: fetchOverdueTickets" -ForegroundColor Cyan

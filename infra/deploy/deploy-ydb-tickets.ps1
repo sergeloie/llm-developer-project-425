@@ -5,12 +5,17 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # 1. Load environment variables from .env into current process (env:)
+# P1 fix: robust parsing via IndexOf('=') — handles values containing '=' (e.g. passwords, base64)
 Write-Host "Loading .env..." -ForegroundColor Cyan
 Get-Content -Path ".env" | ForEach-Object {
-    if ($_ -match "^\s*([^#][^=]+?)\s*=\s*(.*)\s*$") {
-        $key = $Matches[1].Trim()
-        $value = $Matches[2].Trim()
-        $value = $value -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1'
+    $line = $_.Trim()
+    if ($line -eq "" -or $line.StartsWith("#")) { return }
+    $idx = $line.IndexOf('=')
+    if ($idx -le 0) { return }
+    $key = $line.Substring(0, $idx).Trim()
+    $value = $line.Substring($idx + 1).Trim()
+    $value = $value -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1'
+    if ($key -ne "") {
         Set-Item -Path "env:$key" -Value $value
         Write-Host "  env:$key set"
     }
@@ -155,6 +160,9 @@ $z.Entries | ForEach-Object { Write-Host "    $($_.FullName)" }
 $z.Dispose()
 
 # 4. Deploy Cloud Function version — FQN entrypoint, zip via --source-path
+# S3 fix: YDB_TOKEN (секрет ydb-token) НЕ используется — YDB клиент аутентифицируется
+# через IAM сервисного аккаунта (YdbTransportFactory → CloudAuthHelper.getAuthProviderFromEnviron() → metadata service).
+# Переменная/secret YDB_TOKEN оставлена в коде для совместимости, но не требуется для деплоя ydb-tickets.
 Write-Host "Deploying ydb-tickets function from ZIP..." -ForegroundColor Cyan
 yc serverless function version create `
     --function-name ydb-tickets `
@@ -164,8 +172,7 @@ yc serverless function version create `
     --execution-timeout 30s `
     --source-path $ZIP_PATH `
     --service-account-id $SA_ID `
-    --environment YDB_ENDPOINT=$env:YDB_ENDPOINT,YDB_DATABASE=$env:YDB_DATABASE `
-    --secret environment-variable=YDB_TOKEN,name=ydb-token,version-id=latest
+    --environment YDB_ENDPOINT=$env:YDB_ENDPOINT,YDB_DATABASE=$env:YDB_DATABASE
 
 if ($LASTEXITCODE -ne 0) { throw "yc function version create failed for ydb-tickets" }
 
@@ -187,11 +194,24 @@ Write-Host "  Rendered $outPath"
 # 7. Create or update MCP gateway with rendered tools file
 Write-Host "Deploying MCP gateway..." -ForegroundColor Cyan
 $gatewayName = "helpdesk-mcp"
-$existing = yc serverless mcp-gateway get --name $gatewayName --format json 2>$null | ConvertFrom-Json
-if ($existing) {
-    yc serverless mcp-gateway update --name $gatewayName --tools-file $outPath
+# yc get returns non-zero if not found -> PowerShell with $ErrorActionPreference=Stop throws. Handle gracefully.
+$existing = $null
+try {
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $json = yc serverless mcp-gateway get --name $gatewayName --format json 2>&1
+    if ($LASTEXITCODE -eq 0 -and $json) { $existing = $json | ConvertFrom-Json }
+    $ErrorActionPreference = $oldErrorAction
+} catch {
+    $existing = $null
+    $ErrorActionPreference = "Continue"
+}
+if ($existing -and $existing.id) {
+    Write-Host "  Gateway exists ($($existing.id)), updating..." -ForegroundColor Yellow
+    yc serverless mcp-gateway update --name $gatewayName --tools-file $outPath --service-account-id $SA_ID
 } else {
-    yc serverless mcp-gateway create --name $gatewayName --tools-file $outPath
+    Write-Host "  Gateway not found, creating..." -ForegroundColor Yellow
+    yc serverless mcp-gateway create --name $gatewayName --tools-file $outPath --service-account-id $SA_ID
 }
 if ($LASTEXITCODE -ne 0) { throw "MCP gateway deploy failed" }
 

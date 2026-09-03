@@ -32,7 +32,13 @@ public class EmailSenderFunction implements YcFunction<String, String> {
                 System.getenv("SMTP_PASSWORD"),
                 System.getenv("SMTP_USER")
         );
-        this.helpdeskMailbox = System.getenv("HELPDESK_MAILBOX");
+        // S5 fix: алиас OPERATOR_EMAIL → HELPDESK_MAILBOX (step 6 требует OPERATOR_EMAIL,
+        // но исторически используется HELPDESK_MAILBOX). Поддерживаем оба.
+        String mailbox = System.getenv("HELPDESK_MAILBOX");
+        if (mailbox == null || mailbox.isBlank()) {
+            mailbox = System.getenv("OPERATOR_EMAIL");
+        }
+        this.helpdeskMailbox = mailbox;
     }
 
     /**
@@ -57,7 +63,7 @@ public class EmailSenderFunction implements YcFunction<String, String> {
             String mailBody = getStringField(body, "body");
 
             if (to == null || to.isBlank()) {
-                return errorResponse(500, "Environment variable HELPDESK_MAILBOX is not set");
+                return errorResponse(500, "Environment variable HELPDESK_MAILBOX (или OPERATOR_EMAIL) is not set");
             }
 
             sender.send(to, subject != null ? subject : "No Subject",

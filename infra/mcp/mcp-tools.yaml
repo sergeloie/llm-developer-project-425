@@ -3,7 +3,7 @@
   input_json_schema: '{"type":"object","properties":{"user_id":{"type":"string","description":"User ID"},"category":{"type":"string","enum":["bug","docs","feature","access"],"description":"Ticket category"},"text":{"type":"string","description":"Ticket text"}},"required":["user_id","category","text"],"additionalProperties":false}'
   action:
     function_call:
-      function_id: {{YDB_TICKETS_CF_ID}}
+      function_id: d4e3gutmcpvrpruro2cb
       tag: $latest
 
 - name: list-my-tickets
@@ -11,7 +11,7 @@
   input_json_schema: '{"type":"object","properties":{"user_id":{"type":"string","description":"User ID"}},"required":["user_id"],"additionalProperties":false}'
   action:
     function_call:
-      function_id: {{YDB_TICKETS_CF_ID}}
+      function_id: d4e3gutmcpvrpruro2cb
       tag: $latest
 
 - name: append-message
@@ -19,5 +19,5 @@
   input_json_schema: '{"type":"object","properties":{"ticket_id":{"type":"string","description":"Ticket ID"},"text":{"type":"string","description":"Message text"},"role":{"type":"string","enum":["user","agent"],"description":"Message author role"}},"required":["ticket_id","text","role"],"additionalProperties":false}'
   action:
     function_call:
-      function_id: {{YDB_TICKETS_CF_ID}}
+      function_id: d4e3gutmcpvrpruro2cb
       tag: $latest

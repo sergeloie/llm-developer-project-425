@@ -18,7 +18,7 @@ AI-агент службы поддержки на Yandex Cloud: принима�
 - **Репозиторий:** https://github.com/sergeloie/llm-developer-project-425
 - **Агент AI Studio:** https://aistudio.yandex.ru — promptTemplateId `fvtu3g417klcgdhf6fih`
 - **Сервисный аккаунт:** `ai-studio-sa` (роли: `ai.languageModels.user`, `serverless.mcpGateways.invoker`, `lockbox.payloadViewer`, `ydb.editor`, `functions.functionInvoker`)
-- **Секреты Lockbox:** `ydb-database`, `ydb-endpoint`, `yandex-api-key`, `imap-password`, `smtp-password`, `ydb-token`
+- **Секреты Lockbox:** `ydb-database`, `ydb-endpoint`, `agent-api-key` (`key=password` → `YANDEX_API_KEY`), `email-credentials` (`key=password` → `IMAP_PASSWORD` + `SMTP_PASSWORD`, один app-password на IMAP и SMTP; `ydb-token` **не используется** — YDB аутентифицируется через IAM SA, см. `.env.example`)
 
 ## Архитектура монорепо
 
@@ -28,7 +28,7 @@ AI-агент службы поддержки на Yandex Cloud: принима�
 ├── common/         1.0.0 jar   # PiiMasker, InjectionClassifier, YdbTransportFactory, SmtpEmailSender, JsonEventParser
 ├── email-poller/   1.2.0 jar   # entryPoint ru.anseranser.mail.EmailHandler (IMAP → AgentClient(file_search+MCP) → SMTP)
 ├── ydb-tickets/    1.1.0 jar   # entryPoint ru.anseranser.ydb.YdbTicketsHandler (create/list/append, PII + injection)
-├── email-sender/   1.0.0 jar   # entryPoint ru.anseranser.mailsender.EmailSenderFunction (YaWL httpCall)
+├── email-sender/   1.0.0 jar   # entryPoint ru.anseranser.mailsender.EmailSenderFunction (YaWL functionCall — см. ADR ниже)
 └── infra/
     ├── ydb/schema.sql                              # tickets + messages (utf8)
     ├── mcp/mcp-tools.yaml.template                 # 3 tools → {{YDB_TICKETS_CF_ID}}
@@ -58,15 +58,15 @@ AI-агент службы поддержки на Yandex Cloud: принима�
 mvn clean verify
 ```
 
-Результат последнего прогона (31.08.2026, `BUILD SUCCESS`, 45s):
+Результат последнего прогона (03.09.2026, `BUILD SUCCESS`, 67s):
 
 ```
 helpdesk-parent 1.0.0 .... SUCCESS
-common 1.0.0 ............ SUCCESS  Tests run: 36, Failures: 0
-email-poller 1.2.0 ....... SUCCESS  Tests run: 18, Failures: 0
+common 1.0.0 ............ SUCCESS  Tests run: 44, Failures: 0  # +6 LLM mock (InjectionClassifierLlmTest) + SMTP_DEBUG
+email-poller 1.2.0 ....... SUCCESS  Tests run: 20, Failures: 0  # +2 AgentResult token tests
 ydb-tickets 1.1.0 ........ SUCCESS  Tests run: 42, Failures: 0
 email-sender 1.0.0 ....... SUCCESS  Tests run: 12, Failures: 0
-BUILD SUCCESS — всего 108 тестов
+BUILD SUCCESS — всего 118 тестов
 ```
 
 Инфраструктура `infra/` не собирается Maven — шаблоны подставляются скриптами.
@@ -79,7 +79,7 @@ BUILD SUCCESS — всего 108 тестов
 # .env в корне (не коммитится, см. .env.example)
 YDB_ENDPOINT=grpcs://ydb.serverless.yandexcloud.net:2135
 YDB_DATABASE=/ru-central1/...
-YDB_TOKEN=...
+# YDB_TOKEN не требуется — IAM через SA (см. .env.example, S3/S4)
 YANDEX_API_KEY=...
 AGENT_ID=...
 ORGANIZATION_ID=...
@@ -92,7 +92,8 @@ SMTP_HOST=smtp.yandex.ru
 SMTP_PORT=465
 SMTP_USER=serge.loie@yandex.ru
 SMTP_PASSWORD=...
-HELPDESK_MAILBOX=serge.loie@yandex.ru
+HELPDESK_MAILBOX=serge.loie@yandex.ru  # алиас OPERATOR_EMAIL поддерживается (S5)
+# SMTP_DEBUG=true  # включить Session debug
 
 yc init
 yc config set folder-id <FOLDER_ID>
@@ -132,6 +133,14 @@ yc config set folder-id <FOLDER_ID>
 - PII маскируется перед записью в YDB: `+7 (999) 123-45-67 → +7 (***) ***-**-67`, `ivan@example.com → [email]`, `4111 1111 1111 1111 → ****-****-****-1111`.
 - Инъекции: `InjectionClassifier` — уровень 1 regex (`ignore previous`, `DROP TABLE`, `удали все тикеты` …), уровень 2 `yandexgpt-lite` (`safe|injection|off-topic`), `fail-open` при ошибке. `injection → {"error":"Запрос заблокирован модерацией"}` + `ALERT_INJECTION_BLOCKED`.
 - Логи без сырого PII: `action`, `user_id`, `text_length`, `has_pii`, `ticket_id`.
+- SMTP debug под флагом `SMTP_DEBUG=true` (S6) — без флага `Session` не спамит.
+
+### ADR: Workflow `functionCall` vs `httpCall` (S2)
+
+`steps/step-6.md` требует `httpCall POST → email-sender`. В проекте используется `functionCall` (`infra/workflow/daily-escalation.yaml.template` шаг `step-functionCall864`):
+- `httpCall` требует публичного URL и `allow-unauthenticated` → любой, кто узнал URL, может слать письма с корпоративного ящика (см. подсказку step 6 про `OPERATOR_EMAIL`).
+- `functionCall` идёт через IAM SA workflow (`ydb.editor` + `ai.*` уже есть), без публичного http, дешевле и наблюдаемее.
+- Компромисс задокументирован в `soft-dependency skills` как `AdrWorthiness` — решение трудно-обратимое, но меняет attack surface. Если проверяющий ждёт `httpCall`, достаточно заменить 3 строки на `httpCall: {url: https://functions.yandexcloud.net/...}` — логика дайджеста не меняется.
 
 ## Что работает / что не работает
 
@@ -141,7 +150,7 @@ yc config set folder-id <FOLDER_ID>
 - [x] `common`: `PiiMasker`/`InjectionClassifier`/`YdbTransportFactory`/`SmtpEmailSender`/`JsonEventParser` — 36 тестов
 - [x] `email-poller`: `EmailHandler` (UNSEEN via `FlagTerm`, `EmailTextExtractor` text/plain > html + Jsoup), `AgentClient` — один `file_search` (VECTOR_STORE_ID) + один `mcp` (NEVER), 18 тестов
 - [x] `ydb-tickets`: парсит 3 источника (direct / API Gateway httpMethod+body / MCP Hub по ключам), `YdbClient` (`TxControl.serializableRw`, `$id` params), PII + injection, 42 теста
-- [x] `email-sender`: `{"subject","body"}` (строка/массив/объект → pretty JSON) → `HELPDESK_MAILBOX`, 12 тестов
+- [x] `email-sender`: `{"subject","body"}` (строка/массив/объект → pretty JSON) → `HELPDESK_MAILBOX`/`OPERATOR_EMAIL` (алиас, S5), 12 тестов
 - [x] `infra`: `schema.sql` (tickets+messages, `tickets_by_user`), `mcp-tools.yaml.template` / `daily-escalation.yaml.template` (`yawl: 0.2`, `database`, `functionId` — шаблоны `{{...}}`), `deploy-*.ps1` берут `.env` + `yc config`
 - [x] Smoke без реального YC/IMAP покрыт моками: `EventDispatcher` все 3 источника, PII маскируется, injection блокируется (`YdbTicketsHandlerTest` + `SecurityTest`)
 

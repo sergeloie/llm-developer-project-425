@@ -17,7 +17,7 @@ steps:
         type: YDB
         host: ydb.serverless.yandexcloud.net
         port: 2135
-        database: {{YDB_DATABASE}}
+        database: /ru-central1/b1gmfckotdqd4jc4k2p4/etn0mck2utta4gm7cavl
         ssl: true
         iam: true
       query: |-
@@ -78,7 +78,7 @@ steps:
         type: YDB
         host: ydb.serverless.yandexcloud.net
         port: 2135
-        database: {{YDB_DATABASE}}
+        database: /ru-central1/b1gmfckotdqd4jc4k2p4/etn0mck2utta4gm7cavl
         ssl: true
         iam: true
       query: >-
@@ -104,7 +104,7 @@ steps:
     description: ''
   step-functionCall864:
     functionCall:
-      functionId: {{EMAIL_SENDER_CF_ID}}
+      functionId: d4evk9lljvqkg2ffqkjk
       tag: $latest
       # P2 fix: tojson escapes quotes/newlines, digest is now raw .Result string
       input: "{\r\n    \"subject\": \"Summary of overdue tickets\", \n    \"body\": {{.digest | tojson}} \n}"
