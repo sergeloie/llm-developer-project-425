@@ -52,7 +52,7 @@ class EmailHandlerTest {
         String result = handler.handle(null, null);
 
         assertEquals("1 mail(s) done", result);
-        verify(sender).send("user@example.com", "Agent answer", "Agent reply");
+        verify(sender).sendWithThreading("user@example.com", "Re: Hello", "Agent reply", null, "Hello body");
         verify(receiver).markAsSeen(message);
     }
 
@@ -93,7 +93,7 @@ class EmailHandlerTest {
         String result = handler.handle(null, null);
 
         assertEquals("1 mail(s) done", result);
-        verify(sender).send("user2@example.com", "Agent answer", "Reply 2");
+        verify(sender).sendWithThreading("user2@example.com", "Re: Second", "Reply 2", null, "Body 2");
         verify(receiver).markAsSeen(msg2);
     }
 
@@ -108,7 +108,7 @@ class EmailHandlerTest {
         when(agent.getResponseWithUsage(argThat(jsonContains("user1@example.com", "Body 1"))))
                 .thenReturn(new AgentClient.AgentResult("Reply 1", 10L, 10L, "r1", 5L));
         doThrow(new MessagingException("SMTP send failed"))
-                .when(sender).send("user1@example.com", "Agent answer", "Reply 1");
+                .when(sender).sendWithThreading("user1@example.com", "Re: First", "Reply 1", null, "Body 1");
         when(agent.getResponseWithUsage(argThat(jsonContains("user2@example.com", "Body 2"))))
                 .thenReturn(new AgentClient.AgentResult("Reply 2", 10L, 10L, "r2", 5L));
 
@@ -134,7 +134,7 @@ class EmailHandlerTest {
         String result = handler.handle(null, null);
 
         assertEquals("1 mail(s) done", result);
-        verify(sender).send("user2@example.com", "Agent answer", "Reply 2");
+        verify(sender).sendWithThreading("user2@example.com", "Re: Second", "Reply 2", null, "Body 2");
         verify(receiver).markAsSeen(msg2);
         verify(receiver).markAsSeen(msg1);
     }
@@ -155,7 +155,7 @@ class EmailHandlerTest {
         String result = handler.handle(null, null);
 
         assertEquals("1 mail(s) done", result);
-        verify(sender).send("user2@example.com", "Agent answer", "Reply 2");
+        verify(sender).sendWithThreading("user2@example.com", "Re: Second", "Reply 2", null, "Body 2");
     }
 
     @Test

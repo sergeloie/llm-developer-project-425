@@ -40,6 +40,22 @@ public class SmtpEmailSender {
      * @param text    email body (plain text)
      */
     public void send(String to, String subject, String text) throws MessagingException {
+        sendWithThreading(to, subject, text, null, null);
+    }
+
+    /**
+     * Sends a plain-text email with threading headers and quoted original.
+     * Variant 1: preserves user text unchanged (quoted with "> "), but PII masking
+     * stays in YDB layer (ydb-tickets PiiMasker) — email quote is user-owned data,
+     * not a leak. Headers In-Reply-To/References keep mail client threading.
+     *
+     * @param to         recipient
+     * @param subject    reply subject (already "Re: ...")
+     * @param text       agent answer (plain text, not masked)
+     * @param inReplyTo  original Message-ID (may be null)
+     * @param quotedOriginal original user body to quote (may be null) — quoted as "> " lines
+     */
+    public void sendWithThreading(String to, String subject, String text, String inReplyTo, String quotedOriginal) throws MessagingException {
         Properties props = new Properties();
         props.put("mail.smtp.host", smtpHost);
         props.put("mail.smtp.port", smtpPort);
@@ -63,11 +79,23 @@ public class SmtpEmailSender {
             session.setDebugOut(System.out);
         }
 
-        Message message = new MimeMessage(session);
+        MimeMessage message = new MimeMessage(session);
         message.setFrom(new InternetAddress(fromAddress));
         message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(to));
         message.setSubject(subject);
-        message.setText(text);
+        // Variant 1 threading: keep user text unchanged, PII stays in YDB (masked there), email quote is user-owned
+        if (inReplyTo != null && !inReplyTo.isBlank()) {
+            message.setHeader("In-Reply-To", inReplyTo);
+            message.setHeader("References", inReplyTo);
+        }
+        String fullBody = text;
+        if (quotedOriginal != null && !quotedOriginal.isBlank()) {
+            // Quote original unchanged (preserve user text), but do not log raw PII here
+            String quoted = quotedOriginal.replace("\r\n", "\n").replace("\r", "\n");
+            quoted = quoted.replace("\n", "\n> ");
+            fullBody = text + "\n\n> " + quoted;
+        }
+        message.setText(fullBody);
 
         Transport.send(message);
 

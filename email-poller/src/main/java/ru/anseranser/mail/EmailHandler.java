@@ -109,7 +109,20 @@ public class EmailHandler implements YcFunction<String, String> {
             // P1 fix: use getResponseWithUsage to capture tokens/latency for observability (step 9)
             AgentClient.AgentResult result = agent.getResponseWithUsage(jsonRequest);
             String response = result.text();
-            sender.send(from, "Agent answer", response);
+            // Variant 1: threading — preserve user text unchanged via quoted reply, PII stays masked in YDB (ydb-tickets PiiMasker)
+            // Email quote is user-owned data, not a leak; YDB and logs keep masked version
+            String originalMessageId = null;
+            String originalSubject = null;
+            try {
+                String[] msgIdHeader = message.getHeader("Message-ID");
+                if (msgIdHeader != null && msgIdHeader.length > 0) {
+                    originalMessageId = msgIdHeader[0];
+                }
+                originalSubject = message.getSubject();
+            } catch (Exception ignored) {
+            }
+            String replySubject = buildReplySubject(originalSubject);
+            sender.sendWithThreading(from, replySubject, response, originalMessageId, body);
             // Log token/latency explicitly for comparison with messages.tokens_in/out (≤10% rule)
             System.out.printf("EMAIL_TOKENS user_id=%s input=%d output=%d latency=%d responseId=%s%s",
                     from, result.inputTokens(), result.outputTokens(), result.latencyMs(), result.responseId(), System.lineSeparator());
@@ -150,5 +163,16 @@ public class EmailHandler implements YcFunction<String, String> {
 
     private String getAddress(Address address) {
         return ((InternetAddress) address).getAddress();
+    }
+
+    private String buildReplySubject(String originalSubject) {
+        if (originalSubject == null || originalSubject.isBlank()) {
+            return "Re: (no subject)";
+        }
+        String trimmed = originalSubject.trim();
+        if (trimmed.toLowerCase().startsWith("re:")) {
+            return trimmed;
+        }
+        return "Re: " + trimmed;
     }
 }
