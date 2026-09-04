@@ -87,11 +87,11 @@ MCP_SERVER_URL=https://...
 VECTOR_STORE_ID=vs_...
 IMAP_HOST=imap.yandex.ru
 IMAP_USER=serge.loie@yandex.ru
-IMAP_PASSWORD=...
+# IMAP_PASSWORD via Lockbox email-credentials (see .env.example)
 SMTP_HOST=smtp.yandex.ru
 SMTP_PORT=465
 SMTP_USER=serge.loie@yandex.ru
-SMTP_PASSWORD=...
+# SMTP_PASSWORD via Lockbox email-credentials (see .env.example)
 HELPDESK_MAILBOX=serge.loie@yandex.ru  # алиас OPERATOR_EMAIL поддерживается (S5)
 # SMTP_DEBUG=true  # включить Session debug
 

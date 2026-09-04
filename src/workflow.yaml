@@ -1,0 +1,114 @@
+yawl: '0.2'
+# M2 fix: retry only transient errors, not permission errors
+defaultRetryPolicy:
+  errorList:
+    - YDB_CALL_SERVICE_UNAVAILABLE
+    - DATABASE_QUERY_UNAVAILABLE
+    - STEP_TIMEOUT
+    - HTTP_CALL_502
+    - HTTP_CALL_503
+    - HTTP_CALL_504
+  errorListMode: INCLUDE
+start: fetchOverdueTickets
+steps:
+  fetchOverdueTickets:
+    databaseQuery:
+      connection:
+        type: YDB
+        host: ydb.serverless.yandexcloud.net
+        port: 2135
+        database: /ru-central1/b1gmfckotdqd4jc4k2p4/etn0mck2utta4gm7cavl
+        ssl: true
+        iam: true
+      query: |-
+        SELECT
+          id,
+          user_id,
+        category,
+        status,
+        text,
+        created_at
+        FROM tickets
+        WHERE status = 'open'
+          AND created_at < CurrentUtcTimestamp() - Interval('PT24H')
+        ORDER BY created_at ASC
+      mode: QUERY
+      retryPolicy:
+        errorList:
+          - YDB_CALL_SERVICE_UNAVAILABLE
+        errorListMode: INCLUDE
+        initialDelay: 5s
+        maxDelay: 30s
+        retryCount: 3
+        backoffRate: 2
+      output: '\({"tickets": .ResultSets[0]})'
+      next: checkTickets
+      catch: []
+    description: ''
+  checkTickets:
+    switch:
+      choices:
+        - condition: ".tickets | length == 0"
+          next: noOverdueTickets
+      default:
+        next: generateDigest
+    description: ''
+  noOverdueTickets:
+    success: {}
+  generateDigest:
+    aiStudioAgent:
+      promptTemplateId: fvtu3g417klcgdhf6fih
+      message: "You are a HelpDesk analyst. Input tickets: {{ .tickets }}. Each has id, category, text, created_at. For each ticket CREATE summary (1 sentence of text) and recommended_action (concrete step for engineer). Return ONLY valid JSON: {\"tickets\": [{\"id\": \"...\", \"category\": \"...\", \"created_at\": \"...\", \"summary\": \"...\", \"recommended_action\": \"...\"}]}. No markdown, no extra text. If no tickets, return {\"tickets\": []}."
+      autoApprove: true
+      retryPolicy:
+        errorList:
+          - STEP_PERMISSION_DENIED
+        errorListMode: EXCLUDE
+        initialDelay: 10s
+        maxDelay: 60s
+        retryCount: 3
+        backoffRate: 2
+      output: |-
+        \({"digest": (try (.Result | gsub("```json\\n?"; "") | gsub("```\\n?"; "") | gsub("```"; "") | fromjson) catch {"tickets": [], "raw_response": (.Result | tostring), "parse_failed": true})})
+      next: markEscalated
+    description: ''
+  markEscalated:
+    databaseQuery:
+      connection:
+        type: YDB
+        host: ydb.serverless.yandexcloud.net
+        port: 2135
+        database: /ru-central1/b1gmfckotdqd4jc4k2p4/etn0mck2utta4gm7cavl
+        ssl: true
+        iam: true
+      query: >-
+        UPDATE tickets
+
+        SET status = 'escalated',
+
+        updated_at = CurrentUtcTimestamp()
+
+        WHERE id IN ({{ .tickets | map(.id) | map("'" + . + "'") | join(", ")
+        }})
+      mode: QUERY
+      retryPolicy:
+        errorList:
+          - YDB_CALL_SERVICE_UNAVAILABLE
+        errorListMode: INCLUDE
+        initialDelay: 5s
+        maxDelay: 30s
+        retryCount: 3
+        backoffRate: 2
+      next: step-functionCall864
+      catch: []
+    description: ''
+  step-functionCall864:
+    functionCall:
+      functionId: d4evk9lljvqkg2ffqkjk
+      tag: $latest
+      # P2 fix: tojson escapes quotes/newlines, digest is now raw .Result string
+      input: "{\r\n    \"subject\": \"Summary of overdue tickets\", \n    \"body\": {{.digest | tojson}} \n}"
+      next: done
+    description: ''
+  done:
+    success: {}
