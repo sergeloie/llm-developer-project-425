@@ -3,6 +3,8 @@
 token.txt
 *.iml
 HANDOFF*
+/steps
+/docs/*.md
 
 ### Java template
 # Compiled class file
