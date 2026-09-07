@@ -47,7 +47,7 @@ class EmailHandlerTest {
         when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{message});
         when(extractor.extractPlainText(message)).thenReturn("Hello body");
         when(agent.getResponseWithUsage(argThat(jsonContains("user@example.com", "Hello body"))))
-                .thenReturn(new AgentClient.AgentResult("Agent reply", 10L, 20L, "resp_1", 123L));
+                .thenReturn(new AgentClient.AgentResult("Agent reply", 10L, 20L, "resp_1", 123L, "yandexgpt", null));
 
         String result = handler.handle(null, null);
 
@@ -88,7 +88,7 @@ class EmailHandlerTest {
         when(agent.getResponseWithUsage(argThat(jsonContains("user1@example.com", "Body 1"))))
                 .thenThrow(new RuntimeException("Agent unavailable"));
         when(agent.getResponseWithUsage(argThat(jsonContains("user2@example.com", "Body 2"))))
-                .thenReturn(new AgentClient.AgentResult("Reply 2", 5L, 5L, "r2", 10L));
+                .thenReturn(new AgentClient.AgentResult("Reply 2", 5L, 5L, "r2", 10L, "yandexgpt", null));
 
         String result = handler.handle(null, null);
 
@@ -106,11 +106,11 @@ class EmailHandlerTest {
         when(extractor.extractPlainText(msg1)).thenReturn("Body 1");
         when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
         when(agent.getResponseWithUsage(argThat(jsonContains("user1@example.com", "Body 1"))))
-                .thenReturn(new AgentClient.AgentResult("Reply 1", 10L, 10L, "r1", 5L));
+                .thenReturn(new AgentClient.AgentResult("Reply 1", 10L, 10L, "r1", 5L, "yandexgpt", null));
         doThrow(new MessagingException("SMTP send failed"))
                 .when(sender).sendWithThreading("user1@example.com", "Re: First", "Reply 1", null, "Body 1");
         when(agent.getResponseWithUsage(argThat(jsonContains("user2@example.com", "Body 2"))))
-                .thenReturn(new AgentClient.AgentResult("Reply 2", 10L, 10L, "r2", 5L));
+                .thenReturn(new AgentClient.AgentResult("Reply 2", 10L, 10L, "r2", 5L, "yandexgpt", null));
 
         String result = handler.handle(null, null);
 
@@ -129,7 +129,7 @@ class EmailHandlerTest {
         when(extractor.extractPlainText(msg1)).thenThrow(new IOException("Parse error"));
         when(extractor.extractPlainText(msg2)).thenReturn("Body 2");
         when(agent.getResponseWithUsage(argThat(jsonContains("user2@example.com", "Body 2"))))
-                .thenReturn(new AgentClient.AgentResult("Reply 2", 5L, 5L, "r2", 10L));
+                .thenReturn(new AgentClient.AgentResult("Reply 2", 5L, 5L, "r2", 10L, "yandexgpt", null));
 
         String result = handler.handle(null, null);
 
@@ -150,7 +150,7 @@ class EmailHandlerTest {
         when(agent.getResponseWithUsage(argThat(jsonContains("user1@example.com", "Body 1"))))
                 .thenThrow(new RuntimeException("Agent unavailable"));
         when(agent.getResponseWithUsage(argThat(jsonContains("user2@example.com", "Body 2"))))
-                .thenReturn(new AgentClient.AgentResult("Reply 2", 5L, 5L, "r2", 10L));
+                .thenReturn(new AgentClient.AgentResult("Reply 2", 5L, 5L, "r2", 10L, "yandexgpt", null));
 
         String result = handler.handle(null, null);
 

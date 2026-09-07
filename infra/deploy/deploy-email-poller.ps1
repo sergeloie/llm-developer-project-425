@@ -65,6 +65,7 @@ $pom = @'
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.release>21</maven.compiler.release>
     <yc-sdk.version>2.14.0</yc-sdk.version>
+    <jackson.version>2.17.2</jackson.version>
     <angus-mail.version>2.0.5</angus-mail.version>
     <gson.version>2.11.0</gson.version>
     <jsoup.version>1.23.1</jsoup.version>
@@ -78,6 +79,9 @@ $pom = @'
     <dependency><groupId>org.eclipse.angus</groupId><artifactId>angus-mail</artifactId><version>${angus-mail.version}</version></dependency>
     <dependency><groupId>org.jsoup</groupId><artifactId>jsoup</artifactId><version>${jsoup.version}</version></dependency>
     <dependency><groupId>com.google.code.gson</groupId><artifactId>gson</artifactId><version>${gson.version}</version></dependency>
+    <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>${jackson.version}</version></dependency>
+    <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-core</artifactId><version>${jackson.version}</version></dependency>
+    <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-annotations</artifactId><version>${jackson.version}</version></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>${junit.version}</version><scope>test</scope></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-params</artifactId><version>${junit.version}</version><scope>test</scope></dependency>
     <dependency><groupId>org.mockito</groupId><artifactId>mockito-core</artifactId><version>${mockito.version}</version><scope>test</scope></dependency>
@@ -166,7 +170,7 @@ yc serverless function version create `
     --execution-timeout 120s `
     --source-path $ZIP_PATH `
     --service-account-id $SA_ID `
-    --environment IMAP_HOST=$env:IMAP_HOST,IMAP_USER=$env:IMAP_USER,SMTP_HOST=$env:SMTP_HOST,SMTP_PORT=$env:SMTP_PORT,SMTP_USER=$env:SMTP_USER,HELPDESK_MAILBOX=$env:HELPDESK_MAILBOX,YDB_ENDPOINT=$env:YDB_ENDPOINT,YDB_DATABASE=$env:YDB_DATABASE,AGENT_ID=$env:AGENT_ID,ORGANIZATION_ID=$env:ORGANIZATION_ID,MCP_SERVER_URL=$env:MCP_SERVER_URL,VECTOR_STORE_ID=$env:VECTOR_STORE_ID `
+    --environment IMAP_HOST=$env:IMAP_HOST,IMAP_USER=$env:IMAP_USER,SMTP_HOST=$env:SMTP_HOST,SMTP_PORT=$env:SMTP_PORT,SMTP_USER=$env:SMTP_USER,HELPDESK_MAILBOX=$env:HELPDESK_MAILBOX,YDB_ENDPOINT=$env:YDB_ENDPOINT,YDB_DATABASE=$env:YDB_DATABASE,AGENT_ID=$env:AGENT_ID,ORGANIZATION_ID=$env:ORGANIZATION_ID,MCP_SERVER_URL=$env:MCP_SERVER_URL,VECTOR_STORE_ID=$env:VECTOR_STORE_ID,YDB_TICKETS_FUNCTION_ID=d4e3gutmcpvrpruro2cb,YDB_TICKETS_URL=https://functions.yandexcloud.net/d4e3gutmcpvrpruro2cb `
     --secret environment-variable=IMAP_PASSWORD,name=email-credentials,key=password `
     --secret environment-variable=SMTP_PASSWORD,name=email-credentials,key=password `
     --secret environment-variable=YANDEX_API_KEY,name=agent-api-key,key=agent-api-key

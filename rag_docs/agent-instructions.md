@@ -72,7 +72,19 @@
 | Инструмент | Назначение |
 |-----------|-----------|
 | `file_search` | Поиск в базе знаний (ВСЕГДА перед ответом) |
-| `create_ticket` (MCP ydb-tickets) | Создание обращения в YDB |
+| `create-ticket` (MCP ydb-tickets) | Создание обращения в YDB (передай user_id, category, text) |
+| `append-message` (MCP ydb-tickets) | Сохранение реплики диалога в messages — **для role=agent ОБЯЗАТЕЛЬНО передай model, tokens_in, tokens_out, latency_ms из Responses API usage** |
+| `list-my-tickets` (MCP ydb-tickets) | Показать тикеты пользователя по user_id |
+
+### Правила сохранения истории и токенов (критично для шага 9)
+
+После каждого ответа пользователю:
+
+1. Если был создан тикет через `create-ticket` — сразу вызови `append-message` с `role=agent`, `ticket_id` из ответа `create-ticket`, `text` = твой ответ пользователю, `model` = имя модели из Responses API (например `yandexgpt`), `tokens_in` = `usage.input_tokens`, `tokens_out` = `usage.output_tokens`, `latency_ms` = длительность вызова.
+2. Если тикет уже существует (продолжение диалога) — также вызови `append-message` с теми же 4 полями токенов/модели.
+3. Никогда не оставляй `model=""` или `tokens_in=0` для `role=agent` — это ломает сверку `±10%` в QA. Если usage недоступен — передай 0, но модель укажи.
+
+> П oller на стороне Cloud Function также дублирует сохранение через прямое обращение к YDB (fallback), но эталонный путь — ты сам передаёшь токены через MCP.
 
 ## Если пользователь жалуется или агрессивен
 

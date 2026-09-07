@@ -48,6 +48,13 @@ class AgentClientTest {
         lenient().when(usage.outputTokens()).thenReturn(20L);
         lenient().when(response.usage()).thenReturn(Optional.of(usage));
 
+        // model mock for token test
+        try {
+            com.openai.models.ResponsesModel rm = com.openai.models.ResponsesModel.ofString("yandexgpt");
+            lenient().when(response.model()).thenReturn(rm);
+            lenient().when(response._model()).thenReturn(com.openai.core.JsonField.of(rm));
+        } catch (Exception ignored) {}
+
         return response;
     }
 
@@ -151,6 +158,8 @@ class AgentClientTest {
         assertEquals(20L, result.outputTokens());
         assertEquals("resp_123", result.responseId());
         assertTrue(result.latencyMs() >= 0);
+        assertEquals("yandexgpt", result.model());
+        assertNull(result.ticketId());
     }
 
     @Test
@@ -167,6 +176,9 @@ class AgentClientTest {
         when(outputItem.message()).thenReturn(Optional.of(message));
         lenient().when(mockResp.output()).thenReturn(List.of(outputItem));
         lenient().when(mockResp.usage()).thenReturn(Optional.empty());
+        // model empty fallback
+        lenient().when(mockResp.model()).thenReturn(com.openai.models.ResponsesModel.ofString(""));
+        lenient().when(mockResp._model()).thenReturn(com.openai.core.JsonField.of(com.openai.models.ResponsesModel.ofString("")));
 
         when(openAIClient.responses()).thenReturn(responseService);
         when(responseService.create(any(ResponseCreateParams.class))).thenReturn(mockResp);
@@ -175,5 +187,7 @@ class AgentClientTest {
         AgentClient.AgentResult result = client.getResponseWithUsage("test");
         assertEquals(0L, result.inputTokens());
         assertEquals(0L, result.outputTokens());
+        assertEquals("", result.model());
+        assertNull(result.ticketId());
     }
 }

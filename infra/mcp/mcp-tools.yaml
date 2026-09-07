@@ -1,4 +1,4 @@
-- name: create-ticket
+﻿- name: create-ticket
   description: "Create a support ticket in the helpdesk system"
   input_json_schema: '{"type":"object","properties":{"user_id":{"type":"string","description":"User ID"},"category":{"type":"string","enum":["bug","docs","feature","access"],"description":"Ticket category"},"text":{"type":"string","description":"Ticket text"}},"required":["user_id","category","text"],"additionalProperties":false}'
   action:
@@ -15,9 +15,10 @@
       tag: $latest
 
 - name: append-message
-  description: "Add a message to the ticket dialog history"
-  input_json_schema: '{"type":"object","properties":{"ticket_id":{"type":"string","description":"Ticket ID"},"text":{"type":"string","description":"Message text"},"role":{"type":"string","enum":["user","agent"],"description":"Message author role"}},"required":["ticket_id","text","role"],"additionalProperties":false}'
+  description: "Add a message to the ticket dialog history (for agent role include model/tokens/latency from Responses API usage)"
+  input_json_schema: '{"type":"object","properties":{"ticket_id":{"type":"string","description":"Ticket ID"},"text":{"type":"string","description":"Message text"},"role":{"type":"string","enum":["user","agent"],"description":"Message author role"},"model":{"type":"string","description":"Model that generated the message (e.g. yandexgpt)"},"tokens_in":{"type":"integer","description":"Input tokens from Responses API usage.input_tokens"},"tokens_out":{"type":"integer","description":"Output tokens from Responses API usage.output_tokens"},"latency_ms":{"type":"integer","description":"Wall-clock latency of the Responses API call in milliseconds"}},"required":["ticket_id","text","role"],"additionalProperties":false}'
   action:
     function_call:
       function_id: d4e3gutmcpvrpruro2cb
       tag: $latest
+

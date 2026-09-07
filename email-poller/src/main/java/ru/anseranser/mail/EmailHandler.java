@@ -23,6 +23,7 @@ public class EmailHandler implements YcFunction<String, String> {
     private final SmtpEmailSender sender;
     private final AgentClient agent;
     private final EmailTextExtractor extractor;
+    private final YdbMessageSaver ydbSaver;
 
     public EmailHandler() {
         this.receiver = new EmailReceiver(
@@ -46,16 +47,22 @@ public class EmailHandler implements YcFunction<String, String> {
                 System.getenv("VECTOR_STORE_ID")
         );
         this.extractor = new EmailTextExtractor();
+        this.ydbSaver = new YdbMessageSaver();
     }
 
     /**
      * Package-private constructor for unit testing with mocked dependencies.
      */
     EmailHandler(EmailReceiver receiver, SmtpEmailSender sender, AgentClient agent, EmailTextExtractor extractor) {
+        this(receiver, sender, agent, extractor, new YdbMessageSaver(null, null));
+    }
+
+    EmailHandler(EmailReceiver receiver, SmtpEmailSender sender, AgentClient agent, EmailTextExtractor extractor, YdbMessageSaver ydbSaver) {
         this.receiver = receiver;
         this.sender = sender;
         this.agent = agent;
         this.extractor = extractor;
+        this.ydbSaver = ydbSaver;
     }
 
     @Override
@@ -124,11 +131,15 @@ public class EmailHandler implements YcFunction<String, String> {
             String replySubject = buildReplySubject(originalSubject);
             sender.sendWithThreading(from, replySubject, response, originalMessageId, body);
             // Log token/latency explicitly for comparison with messages.tokens_in/out (≤10% rule)
-            System.out.printf("EMAIL_TOKENS user_id=%s input=%d output=%d latency=%d responseId=%s%s",
-                    from, result.inputTokens(), result.outputTokens(), result.latencyMs(), result.responseId(), System.lineSeparator());
-            // Note: explicit persist via append-message with tokens requires ticket_id correlation.
-            // Agent already calls create-ticket/append-message via MCP; usage is available here for metrics
-            // and can be forwarded to YDB via ydb-tickets append-message if ticket_id is known.
+            System.out.printf("EMAIL_TOKENS user_id=%s input=%d output=%d latency=%d responseId=%s model=%s%s",
+                    from, result.inputTokens(), result.outputTokens(), result.latencyMs(), result.responseId(), result.model(), System.lineSeparator());
+            // Persist agent reply with tokens/model directly to YDB (fallback if MCP append-message missed tokens)
+            // per step-9 hint: "доставайте их отдельно" — poller side is authoritative source of usage
+            try {
+                ydbSaver.trySave(from, result, response);
+            } catch (Exception e) {
+                System.out.println("WARN: ydbSaver failed (fail-open): " + e.getMessage());
+            }
             success = true;
             return 1;
         } catch (MessagingException e) {
