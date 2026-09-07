@@ -112,7 +112,16 @@ public class EmailHandler implements YcFunction<String, String> {
                 return 0;
             }
 
-            String jsonRequest = new Gson().toJson(Map.of("user_id", from, "text", body));
+            String deepestOriginal = extractDeepestQuoted(body);
+            if (deepestOriginal != null && !deepestOriginal.isBlank()) {
+                System.out.printf("THREAD_DETECTED deepest_original_len=%d preview=%s%s", deepestOriginal.length(), deepestOriginal.substring(0, Math.min(80, deepestOriginal.length())).replace("\n", " "), System.lineSeparator());
+            }
+            Map<String, Object> reqMap = new java.util.HashMap<>();
+            reqMap.put("user_id", from);
+            reqMap.put("text", body);
+            if (deepestOriginal != null && !deepestOriginal.isBlank()) reqMap.put("original_text", deepestOriginal);
+            reqMap.put("thread_text", body);
+            String jsonRequest = new Gson().toJson(reqMap);
             // P1 fix: use getResponseWithUsage to capture tokens/latency for observability (step 9)
             AgentClient.AgentResult result = agent.getResponseWithUsage(jsonRequest);
             String response = result.text();
@@ -139,6 +148,14 @@ public class EmailHandler implements YcFunction<String, String> {
                 ydbSaver.trySave(from, result, response);
             } catch (Exception e) {
                 System.out.println("WARN: ydbSaver failed (fail-open): " + e.getMessage());
+            }
+            // Code fix for 3-email thread: if ticket was created on confirmation "Да", overwrite tickets.text with deepest quoted original
+            if (result.ticketId() != null && deepestOriginal != null && !deepestOriginal.isBlank()) {
+                try {
+                    ydbSaver.tryCorrectTicketText(result.ticketId(), deepestOriginal);
+                } catch (Exception e) {
+                    System.out.println("WARN: tryCorrectTicketText failed (fail-open): " + e.getMessage());
+                }
             }
             success = true;
             return 1;
@@ -185,5 +202,58 @@ public class EmailHandler implements YcFunction<String, String> {
             return trimmed;
         }
         return "Re: " + trimmed;
+    }
+
+    /**
+     * Extracts deepest nested quoted block (original first question) from reply body.
+     * Counts leading {@code >} markers; max depth is considered original.
+     * Used to preserve original user question in 3-email thread where current body is "Да, создай".
+     * Visible for testing.
+     */
+    static String extractDeepestQuoted(String body) {
+        if (body == null || body.isBlank()) return null;
+        String[] lines = body.split("\\r?\\n");
+        int maxDepth = 0;
+        java.util.Map<Integer, java.util.List<String>> byDepth = new java.util.HashMap<>();
+        for (String line : lines) {
+            String t = line;
+            int depth = 0;
+            int i = 0;
+            // count leading ">" with optional spaces
+            while (i < t.length()) {
+                // skip spaces
+                while (i < t.length() && t.charAt(i) == ' ') i++;
+                if (i < t.length() && t.charAt(i) == '>') {
+                    depth++;
+                    i++;
+                } else break;
+            }
+            if (depth == 0) continue;
+            String content = t.substring(i).trim();
+            // skip empty or "Свернуть" UI markers and agent boilerplate
+            if (content.isEmpty()) continue;
+            if (content.equalsIgnoreCase("Свернуть")) continue;
+            // also skip lines that are just agent's prompt
+            byDepth.computeIfAbsent(depth, k -> new java.util.ArrayList<>()).add(content);
+            if (depth > maxDepth) maxDepth = depth;
+        }
+        if (maxDepth == 0) return null;
+        java.util.List<String> deepest = byDepth.get(maxDepth);
+        if (deepest == null || deepest.isEmpty()) return null;
+        // join, but also filter out agent's "У меня нет информации" at deepest? shouldn't be deepest
+        String joined = String.join("\n", deepest).trim();
+        // Heuristic: if deepest block is very short confirmation, ignore
+        if (joined.length() < 15) return null;
+        // filter if deepest is just agent's proposal (should not happen at max depth)
+        String low = joined.toLowerCase();
+        if (low.contains("у меня нет информации") || low.contains("хотите, чтобы я создал тикет")) {
+            // this is not original question, find next candidate
+            if (byDepth.size() > 1) {
+                // try second max
+                // actually original should be deepest, but if deepest is agent text due to quoting depth bug, fallback
+                return null;
+            }
+        }
+        return joined;
     }
 }

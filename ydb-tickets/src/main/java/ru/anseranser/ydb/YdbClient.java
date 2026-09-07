@@ -226,6 +226,26 @@ public class YdbClient implements AutoCloseable {
         }
     }
 
+    public String updateTicketText(String ticketId, String maskedText) {
+        System.out.println("[YdbClient] updateTicketText: START ticketId=" + ticketId);
+        if (ticketId == null || ticketId.isBlank()) throw new IllegalArgumentException("ticketId must not be blank");
+        if (maskedText == null || maskedText.isBlank()) throw new IllegalArgumentException("maskedText must not be blank");
+        Instant now = Instant.now();
+        try (Session session = tableClient.createSession(Duration.ofSeconds(10)).join().getValue()) {
+            String q = "DECLARE $id AS Utf8; DECLARE $text AS Utf8; DECLARE $updated_at AS Timestamp; UPDATE tickets SET text=$text, updated_at=$updated_at WHERE id=$id;";
+            Params p = Params.of("$id", PrimitiveValue.newText(ticketId), "$text", PrimitiveValue.newText(maskedText), "$updated_at", PrimitiveValue.newTimestamp(now));
+            session.executeDataQuery(q, TxControl.serializableRw().setCommitTx(true), p).join();
+            System.out.println("[YdbClient] updateTicketText: FINISHED ticketId=" + ticketId);
+            ObjectNode r = MAPPER.createObjectNode();
+            r.put("ok", true);
+            r.put("ticket_id", ticketId);
+            return MAPPER.writeValueAsString(r);
+        } catch (IllegalArgumentException e) { throw e; } catch (Exception e) {
+            System.out.println("[YdbClient] updateTicketText: ERROR " + e.getMessage());
+            throw new RuntimeException("Failed to updateTicketText: " + e.getMessage(), e);
+        }
+    }
+
     private String preview(String text) {
         if (text == null) return "null";
         return text.length() > 100 ? text.substring(0, 100) : text;

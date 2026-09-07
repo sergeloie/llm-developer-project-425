@@ -88,6 +88,51 @@ public class YdbMessageSaver {
         }
     }
 
+    /**
+     * Defensive correction for 3-email thread: overwrite tickets.text with deepest quoted original
+     * (first user question) after agent created ticket with paraphrase. Fail-open.
+     * Also appends original as role=user if it differs from confirmation.
+     */
+    public void tryCorrectTicketText(String ticketId, String deepestOriginal) {
+        if (ticketId == null || ticketId.isBlank() || deepestOriginal == null || deepestOriginal.isBlank()) return;
+        // filter short confirmations like "Да, создай тикет"
+        String trimmed = deepestOriginal.trim();
+        if (trimmed.length() < 15) return; // original question is longer
+        // avoid correcting to a confirmation phrase
+        String low = trimmed.toLowerCase();
+        if (low.equals("да") || low.equals("да, создай тикет") || low.equals("да, создай тикет.") || low.equals("создай тикет")) return;
+        String invokeUrl = ydbTicketsUrl;
+        if (invokeUrl == null || invokeUrl.isBlank()) {
+            String fid = System.getenv("YDB_TICKETS_FUNCTION_ID");
+            if (fid != null && !fid.isBlank()) invokeUrl = "https://functions.yandexcloud.net/" + fid;
+        }
+        if (invokeUrl == null || invokeUrl.isBlank()) {
+            System.out.printf("SKIP_CORRECT No YDB_TICKETS_URL ticket_id=%s%s", ticketId, System.lineSeparator());
+            return;
+        }
+        try {
+            // 1) update tickets.text to deepest original (PII will be masked in handler)
+            Map<String, Object> upd = new java.util.HashMap<>();
+            upd.put("action", "update-ticket-text");
+            upd.put("ticket_id", ticketId);
+            upd.put("text", trimmed);
+            String updPayload = GSON.toJson(upd);
+            String updResp = invokeFunction(invokeUrl, updPayload);
+            System.out.printf("CORRECTED_TICKET_TEXT ticket_id=%s original_len=%d resp=%s%s", ticketId, trimmed.length(), updResp, System.lineSeparator());
+            // 2) append original as user message for full history (fail-open if duplicate)
+            Map<String, Object> app = new java.util.HashMap<>();
+            app.put("action", "append-message");
+            app.put("ticket_id", ticketId);
+            app.put("role", "user");
+            app.put("text", trimmed);
+            String appPayload = GSON.toJson(app);
+            String appResp = invokeFunction(invokeUrl, appPayload);
+            System.out.printf("APPENDED_ORIGINAL_USER_MESSAGE ticket_id=%s resp=%s%s", ticketId, appResp, System.lineSeparator());
+        } catch (Exception e) {
+            System.out.println("Failed to correct ticket text (fail-open): " + e.getMessage());
+        }
+    }
+
     private String invokeFunction(String url, String json) throws Exception {
         HttpRequest.Builder b = HttpRequest.newBuilder()
                 .uri(URI.create(url))
