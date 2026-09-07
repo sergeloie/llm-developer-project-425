@@ -58,15 +58,15 @@ AI-агент службы поддержки на Yandex Cloud: принима�
 mvn clean verify
 ```
 
-Результат последнего прогона (03.09.2026 20:41 +05, `BUILD SUCCESS`, 49.5s):
+Результат последнего прогона (`BUILD SUCCESS`):
 
 ```
 helpdesk-parent 1.0.0 .... SUCCESS
 common 1.0.0 ............ SUCCESS  Tests run: 44, Failures: 0  # +6 LLM mock (InjectionClassifierLlmTest) + SMTP_DEBUG
-email-poller 1.2.0 ....... SUCCESS  Tests run: 20, Failures: 0  # +2 AgentResult token tests (TOKENS_USAGE/EMAIL_TOKENS)
-ydb-tickets 1.1.0 ........ SUCCESS  Tests run: 42, Failures: 0
+email-poller 1.2.0 ....... SUCCESS  Tests run: 27, Failures: 0  # +6: trySave-contract + saver guards (после амендмента ADR-0001)
+ydb-tickets 1.1.0 ........ SUCCESS  Tests run: 44, Failures: 0  # после удаления update-ticket-text
 email-sender 1.0.0 ....... SUCCESS  Tests run: 12, Failures: 0
-BUILD SUCCESS — всего 118 тестов (44+42+20+12)
+BUILD SUCCESS — всего 127 тестов (44+27+44+12)
 ```
 
 Инфраструктура `infra/` не собирается Maven — шаблоны подставляются скриптами.
@@ -130,6 +130,7 @@ yc config set folder-id <FOLDER_ID>
 
 Правила:
 - Никогда не интерполировать untrusted в trusted-контекст — передавать как `input`, не в системный промпт.
+- **Путь записи в YDB (амендмент ADR-0001):** `create-ticket` — только агент через MCP (тикет + первая `role=user` строка, текст = дословные слова клиента); `role=agent` строку с реальными model/tokens/latency дописывает poller напрямую (`YdbMessageSaver.trySave` → HTTP `append-message`) — шаг 9 «доставайте их отдельно», poller авторитетный источник usage.
 - PII маскируется перед записью в YDB: `+7 (999) 123-45-67 → +7 (***) ***-**-67`, `ivan@example.com → [email]`, `4111 1111 1111 1111 → ****-****-****-1111`.
 - Инъекции: `InjectionClassifier` — уровень 1 regex (`ignore previous`, `DROP TABLE`, `удали все тикеты` …), уровень 2 `yandexgpt-lite` (`safe|injection|off-topic`), `fail-open` при ошибке. `injection → {"error":"Запрос заблокирован модерацией"}` + `ALERT_INJECTION_BLOCKED`.
 - Логи без сырого PII: `action`, `user_id`, `text_length`, `has_pii`, `ticket_id`.
@@ -146,10 +147,10 @@ yc config set folder-id <FOLDER_ID>
 
 ### Работает ✅
 
-- [x] `mvn clean verify` в корне — все 4 модуля, 118 тестов зелёные (44+42+20+12), shaded jar собираются
+- [x] `mvn clean verify` в корне — все 4 модуля, 127 тестов зелёные (44+27+44+12), shaded jar собираются
 - [x] `common`: `PiiMasker`/`InjectionClassifier`/`YdbTransportFactory`/`SmtpEmailSender`/`JsonEventParser` — 44 теста (+6 `InjectionClassifierLlmTest` c `yandexgpt-lite` mock + `HttpServer`, 6 `SmtpEmailSenderTest` c `SMTP_DEBUG`)
-- [x] `email-poller`: `EmailHandler` (UNSEEN via `FlagTerm`, `finally markAsSeen` — M1, `EmailTextExtractor` text/plain > html + Jsoup), `AgentClient` — один `file_search` (VECTOR_STORE_ID `fvtn72d9ke0vulslnq37`) + один `mcp` (NEVER), 20 тестов (+`AgentResult` c `TOKENS_USAGE`/`EMAIL_TOKENS` — P1)
-- [x] `ydb-tickets`: парсит 3 источника (direct / API Gateway httpMethod+body / MCP Hub по ключам), `YdbClient` (`TxControl.serializableRw`, `$id` params), PII + injection, 42 теста
+- [x] `email-poller`: `EmailHandler` (UNSEEN via `FlagTerm`, `finally markAsSeen` — M1, `EmailTextExtractor` text/plain > html + Jsoup), `AgentClient` — один `file_search` (VECTOR_STORE_ID `fvtn72d9ke0vulslnq37`) + один `mcp` (NEVER), 27 тестов (+`AgentResult` c `TOKENS_USAGE`/`EMAIL_TOKENS` — P1, +`YdbMessageSaver.trySave` contract — амендмент ADR-0001). Агенту передаются только `user_id`+`text`; `create-ticket` — только агент через MCP; `role=agent` строку с real usage дописывает poller (`YdbMessageSaver.trySave` → HTTP `append-message`); `extractDeepestQuoted`/`original_text`/`thread_text`/`update-ticket-text` удалены (ADR-0001)
+- [x] `ydb-tickets`: парсит 3 источника (direct / API Gateway httpMethod+body / MCP Hub по ключам), `YdbClient` (`TxControl.serializableRw`, `$id` params), PII + injection, 44 теста; ровно 3 инструмента (`create-ticket`/`list-my-tickets`/`append-message`), `update-ticket-text` удалён (ADR-0001)
 - [x] `email-sender`: `{"subject","body"}` (строка/массив/объект → pretty JSON) → `HELPDESK_MAILBOX`/`OPERATOR_EMAIL` (алиас, S5), 12 тестов
 - [x] `infra`: `schema.sql` (tickets+messages, `tickets_by_user`), `mcp-tools.yaml.template` / `daily-escalation.yaml.template` (`yawl: 0.2`, `database`, `functionId` — шаблоны `{{...}}`), `deploy-*.ps1` берут `.env` + `yc config`
 - [x] Smoke без реального YC/IMAP покрыт моками: `EventDispatcher` все 3 источника, PII маскируется, injection блокируется (`YdbTicketsHandlerTest` + `SecurityTest`)

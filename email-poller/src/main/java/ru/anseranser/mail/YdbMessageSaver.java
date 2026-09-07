@@ -12,9 +12,14 @@ import java.time.Duration;
 import java.util.Map;
 
 /**
- * Best-effort persister for agent reply with tokens/model via ydb-tickets function.
- * Calls ydb-tickets directly via HTTP (IAM token from metadata or YANDEX_API_KEY).
- * Fail-open.
+ * Persists the agent reply row (role=agent) with model/tokens/latency via ydb-tickets `append-message`.
+ * <p>
+ * Per step 9 of the ТЗ ("доставайте их отдельно") the poller is the authoritative source of `usage` —
+ * the LLM agent cannot see its own token counters, so the poller appends the role=agent row directly
+ * via HTTP to ydb-tickets. This guarantees the ticket has exactly 2 messages: role=user (written by
+ * `create-ticket` with the client's verbatim words) and role=agent (written here, with real usage).
+ * <p>
+ * Fail-open: any failure only logs, never aborts email processing.
  */
 public class YdbMessageSaver {
 
@@ -23,32 +28,32 @@ public class YdbMessageSaver {
     private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
     private final String ydbTicketsUrl;
-    private final String ydbEndpoint;
-    private final String ydbDatabase;
 
     public YdbMessageSaver() {
-        this(System.getenv("YDB_TICKETS_URL"), System.getenv("YDB_ENDPOINT"), System.getenv("YDB_DATABASE"));
+        this(System.getenv("YDB_TICKETS_URL"));
     }
 
-    YdbMessageSaver(String ydbTicketsUrl, String ydbEndpoint, String ydbDatabase) {
+    YdbMessageSaver(String ydbTicketsUrl) {
         this.ydbTicketsUrl = ydbTicketsUrl;
-        this.ydbEndpoint = ydbEndpoint;
-        this.ydbDatabase = ydbDatabase;
-    }
-
-    // test constructor
-    YdbMessageSaver(String ydbEndpoint, String ydbDatabase) {
-        this(null, ydbEndpoint, ydbDatabase);
     }
 
     public void trySave(String userId, AgentClient.AgentResult result, String agentText) {
-        if (userId == null || userId.isBlank() || result == null || agentText == null || agentText.isBlank()) return;
-        if ((result.inputTokens() == 0 && result.outputTokens() == 0 && (result.model() == null || result.model().isBlank()))) {
-            System.out.println("No usage/model to persist, skip");
+        if (userId == null || userId.isBlank() || result == null || agentText == null || agentText.isBlank()) {
+            System.out.println("SKIP_PERSIST missing user_id/result/agentText");
             return;
         }
-        // Prefer ticketId already extracted from MCP output (avoids list call that returns array -> 502 via gateway)
+        if (result.inputTokens() == 0 && result.outputTokens() == 0 && (result.model() == null || result.model().isBlank())) {
+            System.out.println("SKIP_PERSIST No usage/model to persist, rely on agent");
+            return;
+        }
+        // TicketId is extracted by AgentClient from the create-ticket MCP call output within the same agent response.
         String ticketId = result.ticketId();
+        if (ticketId == null || ticketId.isBlank()) {
+            // Agent answered without creating a ticket (e.g. RAG answer) — nothing to append to.
+            System.out.printf("SKIP_PERSIST No ticketId in MCP output, assume RAG answer without ticket. user_id=%s model=%s input=%d output=%d%s",
+                    userId, result.model(), result.inputTokens(), result.outputTokens(), System.lineSeparator());
+            return;
+        }
         String invokeUrl = ydbTicketsUrl;
         if (invokeUrl == null || invokeUrl.isBlank()) {
             String fid = System.getenv("YDB_TICKETS_FUNCTION_ID");
@@ -62,14 +67,6 @@ public class YdbMessageSaver {
             return;
         }
         try {
-            if (ticketId == null || ticketId.isBlank()) {
-                // No ticketId from MCP — agent answered without creating ticket (RAG). Try to find via list only if needed,
-                // but list via gateway returns array -> 502, so skip and rely on MCP
-                System.out.printf("SKIP_PERSIST No ticketId in MCP output, assume RAG answer without ticket. user_id=%s model=%s input=%d output=%d%s",
-                        userId, result.model(), result.inputTokens(), result.outputTokens(), System.lineSeparator());
-                return;
-            }
-            // Append agent message with tokens using known ticketId — avoids list call
             Map<String, Object> append = new java.util.HashMap<>();
             append.put("action", "append-message");
             append.put("ticket_id", ticketId);
@@ -84,52 +81,7 @@ public class YdbMessageSaver {
             System.out.printf("PERSISTED_AGENT_MESSAGE ticket_id=%s model=%s input=%d output=%d latency=%d resp=%s%s",
                     ticketId, result.model(), result.inputTokens(), result.outputTokens(), result.latencyMs(), appendResp, System.lineSeparator());
         } catch (Exception e) {
-            System.out.println("Failed to persist agent message (fail-open): " + e.getMessage());
-        }
-    }
-
-    /**
-     * Defensive correction for 3-email thread: overwrite tickets.text with deepest quoted original
-     * (first user question) after agent created ticket with paraphrase. Fail-open.
-     * Also appends original as role=user if it differs from confirmation.
-     */
-    public void tryCorrectTicketText(String ticketId, String deepestOriginal) {
-        if (ticketId == null || ticketId.isBlank() || deepestOriginal == null || deepestOriginal.isBlank()) return;
-        // filter short confirmations like "Да, создай тикет"
-        String trimmed = deepestOriginal.trim();
-        if (trimmed.length() < 15) return; // original question is longer
-        // avoid correcting to a confirmation phrase
-        String low = trimmed.toLowerCase();
-        if (low.equals("да") || low.equals("да, создай тикет") || low.equals("да, создай тикет.") || low.equals("создай тикет")) return;
-        String invokeUrl = ydbTicketsUrl;
-        if (invokeUrl == null || invokeUrl.isBlank()) {
-            String fid = System.getenv("YDB_TICKETS_FUNCTION_ID");
-            if (fid != null && !fid.isBlank()) invokeUrl = "https://functions.yandexcloud.net/" + fid;
-        }
-        if (invokeUrl == null || invokeUrl.isBlank()) {
-            System.out.printf("SKIP_CORRECT No YDB_TICKETS_URL ticket_id=%s%s", ticketId, System.lineSeparator());
-            return;
-        }
-        try {
-            // 1) update tickets.text to deepest original (PII will be masked in handler)
-            Map<String, Object> upd = new java.util.HashMap<>();
-            upd.put("action", "update-ticket-text");
-            upd.put("ticket_id", ticketId);
-            upd.put("text", trimmed);
-            String updPayload = GSON.toJson(upd);
-            String updResp = invokeFunction(invokeUrl, updPayload);
-            System.out.printf("CORRECTED_TICKET_TEXT ticket_id=%s original_len=%d resp=%s%s", ticketId, trimmed.length(), updResp, System.lineSeparator());
-            // 2) append original as user message for full history (fail-open if duplicate)
-            Map<String, Object> app = new java.util.HashMap<>();
-            app.put("action", "append-message");
-            app.put("ticket_id", ticketId);
-            app.put("role", "user");
-            app.put("text", trimmed);
-            String appPayload = GSON.toJson(app);
-            String appResp = invokeFunction(invokeUrl, appPayload);
-            System.out.printf("APPENDED_ORIGINAL_USER_MESSAGE ticket_id=%s resp=%s%s", ticketId, appResp, System.lineSeparator());
-        } catch (Exception e) {
-            System.out.println("Failed to correct ticket text (fail-open): " + e.getMessage());
+            System.out.println("FAILED_PERSIST_AGENT_MESSAGE (fail-open): " + e.getMessage());
         }
     }
 
@@ -139,7 +91,7 @@ public class YdbMessageSaver {
                 .timeout(Duration.ofSeconds(10))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json));
-        // Try IAM token from metadata, else YANDEX_API_KEY
+        // IAM token from metadata takes precedence (function runs inside YC); fall back to API key for local runs.
         String iam = fetchIamToken();
         if (iam != null && !iam.isBlank()) {
             b.header("Authorization", "Bearer " + iam);
@@ -169,33 +121,8 @@ public class YdbMessageSaver {
                 JsonNode n = MAPPER.readTree(r.body());
                 return n.has("access_token") ? n.get("access_token").asText() : null;
             }
-        } catch (Exception ignored) {}
-        return null;
-    }
-
-    private String extractLatestTicketId(String listJson) {
-        try {
-            JsonNode arr = MAPPER.readTree(listJson);
-            JsonNode tickets = arr;
-            if (arr.isObject() && arr.has("tickets")) tickets = arr.get("tickets");
-            if (!tickets.isArray() || tickets.size() == 0) return null;
-            String latestId = null;
-            String latestAt = "";
-            for (JsonNode t : tickets) {
-                String id = t.has("id") ? t.get("id").asText() : null;
-                String at = t.has("created_at") ? t.get("created_at").asText() : "";
-                if (id != null && at.compareTo(latestAt) >= 0) {
-                    latestAt = at;
-                    latestId = id;
-                }
-            }
-            if (latestId == null && tickets.size() > 0) {
-                latestId = tickets.get(tickets.size() - 1).has("id") ? tickets.get(tickets.size() - 1).get("id").asText() : null;
-            }
-            return latestId;
-        } catch (Exception e) {
-            System.out.println("Failed to parse listMyTickets: " + e.getMessage());
-            return null;
+        } catch (Exception ignored) {
         }
+        return null;
     }
 }

@@ -93,7 +93,6 @@ public class YdbTicketsHandler implements YcFunction<String, String> {
                 case "create-ticket" -> handleCreateTicket(root);
                 case "list-my-tickets" -> handleListMyTickets(root);
                 case "append-message" -> handleAppendMessage(root);
-                case "update-ticket", "update-ticket-text" -> handleUpdateTicketText(root);
                 default -> errorResponse("Unknown action: " + action);
             };
 
@@ -168,18 +167,6 @@ public class YdbTicketsHandler implements YcFunction<String, String> {
 
         YdbClient client = getOrCreateYdbClient();
         return client.appendMessage(ticketId, role, masked, model, tokensIn, tokensOut, latencyMs);
-    }
-
-    private String handleUpdateTicketText(JsonNode root) {
-        String ticketId = getText(root, "ticket_id");
-        if (ticketId == null) ticketId = getText(root, "id");
-        String text = getText(root, "text");
-        if (ticketId == null || text == null) return errorResponse("Missing ticket_id/text for update-ticket-text");
-        String masked = PiiMasker.maskPii(text);
-        boolean hasPii = PiiMasker.containsPii(text);
-        System.out.println("INFO: update-ticket-text ticket_id=" + ticketId + ", text_length=" + text.length() + ", has_pii=" + hasPii);
-        YdbClient client = getOrCreateYdbClient();
-        return client.updateTicketText(ticketId, masked);
     }
 
     private String getText(JsonNode root, String field) {

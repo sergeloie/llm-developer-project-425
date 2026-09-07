@@ -199,29 +199,5 @@ class YdbClientTest {
         assertThrows(IllegalArgumentException.class, () -> ydbClient.appendMessage("t1", "user", null, "", 0, 0, 0));
     }
 
-    @Test
-    void updateTicketText_success() {
-        mockSession();
-        when(session.executeDataQuery(anyString(), any(TxControl.class), any(Params.class)))
-                .thenReturn(CompletableFuture.completedFuture(Result.success(null)));
-        String resp = ydbClient.updateTicketText("t1", "masked original question");
-        assertNotNull(resp);
-        assertTrue(resp.contains("t1"));
-        assertTrue(resp.contains("\"ok\":true"));
-        ArgumentCaptor<String> qc = ArgumentCaptor.forClass(String.class);
-        verify(session).executeDataQuery(qc.capture(), any(TxControl.class), any(Params.class));
-        assertTrue(qc.getValue().contains("UPDATE tickets SET text"));
-    }
-
-    @Test
-    void updateTicketText_blankTicketThrows() {
-        assertThrows(IllegalArgumentException.class, () -> ydbClient.updateTicketText("", "hi"));
-    }
-
-    @Test
-    void updateTicketText_blankTextThrows() {
-        assertThrows(IllegalArgumentException.class, () -> ydbClient.updateTicketText("t1", "   "));
-    }
-
 
 }

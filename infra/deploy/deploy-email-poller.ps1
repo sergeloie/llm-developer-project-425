@@ -170,7 +170,7 @@ yc serverless function version create `
     --execution-timeout 120s `
     --source-path $ZIP_PATH `
     --service-account-id $SA_ID `
-    --environment IMAP_HOST=$env:IMAP_HOST,IMAP_USER=$env:IMAP_USER,SMTP_HOST=$env:SMTP_HOST,SMTP_PORT=$env:SMTP_PORT,SMTP_USER=$env:SMTP_USER,HELPDESK_MAILBOX=$env:HELPDESK_MAILBOX,YDB_ENDPOINT=$env:YDB_ENDPOINT,YDB_DATABASE=$env:YDB_DATABASE,AGENT_ID=$env:AGENT_ID,ORGANIZATION_ID=$env:ORGANIZATION_ID,MCP_SERVER_URL=$env:MCP_SERVER_URL,VECTOR_STORE_ID=$env:VECTOR_STORE_ID,YDB_TICKETS_FUNCTION_ID=d4e3gutmcpvrpruro2cb,YDB_TICKETS_URL=https://functions.yandexcloud.net/d4e3gutmcpvrpruro2cb `
+    --environment IMAP_HOST=$env:IMAP_HOST,IMAP_USER=$env:IMAP_USER,SMTP_HOST=$env:SMTP_HOST,SMTP_PORT=$env:SMTP_PORT,SMTP_USER=$env:SMTP_USER,HELPDESK_MAILBOX=$env:HELPDESK_MAILBOX,AGENT_ID=$env:AGENT_ID,ORGANIZATION_ID=$env:ORGANIZATION_ID,MCP_SERVER_URL=$env:MCP_SERVER_URL,VECTOR_STORE_ID=$env:VECTOR_STORE_ID,YDB_TICKETS_URL=$env:YDB_TICKETS_URL,YDB_TICKETS_FUNCTION_ID=$env:YDB_TICKETS_FUNCTION_ID `
     --secret environment-variable=IMAP_PASSWORD,name=email-credentials,key=password `
     --secret environment-variable=SMTP_PASSWORD,name=email-credentials,key=password `
     --secret environment-variable=YANDEX_API_KEY,name=agent-api-key,key=agent-api-key

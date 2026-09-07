@@ -155,25 +155,16 @@ class YdbTicketsHandlerTest {
     }
 
     @Test
-    void handle_updateTicketText_success() {
+    void handle_updateTicketText_isUnknownAction() {
         String event = "{\"action\":\"update-ticket-text\",\"ticket_id\":\"t1\",\"text\":\"Я вчера платил с карты 1465-6518-6548-5318\"}";
-        when(ydbClient.updateTicketText(anyString(), anyString())).thenReturn("{\"ok\":true,\"ticket_id\":\"t1\"}");
         String resp = handler.handle(event, null);
-        assertTrue(resp.contains("ok"));
-        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
-        verify(ydbClient).updateTicketText(eq("t1"), cap.capture());
-        assertTrue(cap.getValue().contains("****"));
+        assertTrue(resp.contains("Unknown action"));
     }
 
     @Test
-    void handle_updateTicketText_piiMasked() {
-        String event = "{\"action\":\"update-ticket\",\"ticket_id\":\"t1\",\"text\":\"+7-951-123-45-67 и barboss@example.com\"}";
-        when(ydbClient.updateTicketText(anyString(), anyString())).thenReturn("{\"ok\":true}");
-        handler.handle(event, null);
-        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
-        verify(ydbClient).updateTicketText(eq("t1"), cap.capture());
-        String masked = cap.getValue();
-        assertTrue(masked.contains("+7 (***)"));
-        assertTrue(masked.contains("[email]"));
+    void handle_updateTicket_isUnknownAction() {
+        String event = "{\"action\":\"update-ticket\",\"ticket_id\":\"t1\",\"text\":\"+7-951-123-45-67\"}";
+        String resp = handler.handle(event, null);
+        assertTrue(resp.contains("Unknown action"));
     }
 }

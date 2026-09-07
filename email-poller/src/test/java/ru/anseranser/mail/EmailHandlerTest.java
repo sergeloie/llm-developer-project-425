@@ -33,6 +33,8 @@ class EmailHandlerTest {
     private AgentClient agent;
     @Mock
     private EmailTextExtractor extractor;
+    @Mock
+    private YdbMessageSaver ydbSaver;
 
     private EmailHandler handler;
 
@@ -201,37 +203,39 @@ class EmailHandlerTest {
     }
 
     @Test
-    void extractDeepestQuoted_threeLevelThread_returnsOriginal() {
-        String body = "да, создай тикет\n\n> У меня нет информации по этому вопросу.\n> Хотите, чтобы я создал тикет?\n>\n> > Я вчера платил с карты 1465-6518-6548-5318 по 500 рублей, пришло только одно";
-        String deepest = EmailHandler.extractDeepestQuoted(body);
-        // should return innermost original (depth 2)
-        org.junit.jupiter.api.Assertions.assertNotNull(deepest);
-        org.junit.jupiter.api.Assertions.assertTrue(deepest.contains("1465-6518"));
+    void handle_persistsAgentMessageWithUsage_viaSaver() throws Exception {
+        Message message = mockMessage("user@example.com", "Hello");
+        when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{message});
+        when(extractor.extractPlainText(message)).thenReturn("Hello body");
+        AgentClient.AgentResult result = new AgentClient.AgentResult("Agent reply", 10L, 20L, "resp_1", 123L, "yandexgpt", "tid123");
+        when(agent.getResponseWithUsage(argThat(jsonContains("user@example.com", "Hello body"))))
+                .thenReturn(result);
+        handler = new EmailHandler(receiver, sender, agent, extractor, ydbSaver);
+
+        handler.handle(null, null);
+
+        verify(ydbSaver).trySave("user@example.com", result, "Agent reply");
     }
 
     @Test
-    void extractDeepestQuoted_noQuoted_returnsNull() {
-        String body = "Просто вопрос без цитат";
-        org.junit.jupiter.api.Assertions.assertNull(EmailHandler.extractDeepestQuoted(body));
-    }
-
-    @Test
-    void extractDeepestQuoted_shortConfirmation_returnsNull() {
-        String body = "Да\n\n> ok";
-        org.junit.jupiter.api.Assertions.assertNull(EmailHandler.extractDeepestQuoted(body));
-    }
-
-    @Test
-    void handle_withThreadedBody_sendsJsonWithOriginalText() throws Exception {
+    void handle_onlySendsUserIdAndText_noOriginalOrThreadFields() throws Exception {
         Message message = mockMessage("user@example.com", "Hello");
         String threadedBody = "да, создай тикет\n\n> У меня нет\n> > Я вчера платил с карты 1465-6518-6548-5318";
         when(receiver.fetchUnreadMessages()).thenReturn(new Message[]{message});
         when(extractor.extractPlainText(message)).thenReturn(threadedBody);
-        when(agent.getResponseWithUsage(argThat(json -> json != null && json.contains("original_text") && json.contains("1465-6518"))))
+        // Send-path contract: the poller passes ONLY user_id + text (full body with quotes) to the agent —
+        // no original_text, no thread_text. (Text equality on the >-quoted body is not asserted verbatim
+        // because Gson HTML-escapes ">" as \u003e.)
+        ArgumentMatcher<String> sendContract = json -> json != null
+                && json.contains("\"user_id\":\"user@example.com\"")
+                && json.contains("\"text\":")
+                && !json.contains("original_text")
+                && !json.contains("thread_text");
+        when(agent.getResponseWithUsage(argThat(sendContract)))
                 .thenReturn(new AgentClient.AgentResult("ok", 10L, 10L, "r1", 5L, "yandexgpt", "tid123"));
 
         handler.handle(null, null);
 
-        verify(agent).getResponseWithUsage(argThat(json -> json.contains("original_text")));
+        verify(agent).getResponseWithUsage(argThat(sendContract));
     }
 }

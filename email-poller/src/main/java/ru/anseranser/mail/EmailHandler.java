@@ -54,9 +54,12 @@ public class EmailHandler implements YcFunction<String, String> {
      * Package-private constructor for unit testing with mocked dependencies.
      */
     EmailHandler(EmailReceiver receiver, SmtpEmailSender sender, AgentClient agent, EmailTextExtractor extractor) {
-        this(receiver, sender, agent, extractor, new YdbMessageSaver(null, null));
+        this(receiver, sender, agent, extractor, new YdbMessageSaver());
     }
 
+    /**
+     * Package-private constructor for unit testing with a mocked {@link YdbMessageSaver}.
+     */
     EmailHandler(EmailReceiver receiver, SmtpEmailSender sender, AgentClient agent, EmailTextExtractor extractor, YdbMessageSaver ydbSaver) {
         this.receiver = receiver;
         this.sender = sender;
@@ -112,15 +115,12 @@ public class EmailHandler implements YcFunction<String, String> {
                 return 0;
             }
 
-            String deepestOriginal = extractDeepestQuoted(body);
-            if (deepestOriginal != null && !deepestOriginal.isBlank()) {
-                System.out.printf("THREAD_DETECTED deepest_original_len=%d preview=%s%s", deepestOriginal.length(), deepestOriginal.substring(0, Math.min(80, deepestOriginal.length())).replace("\n", " "), System.lineSeparator());
-            }
+            // Transport-message: pass the full email body (with all thread quotes) to the agent as `text`.
+            // The agent (LLM) is responsible for extracting the original question from the quoted chain —
+            // the poller does NOT parse "whose quote is this" (see CONTEXT.md: Транспорт-сообщение пользователя).
             Map<String, Object> reqMap = new java.util.HashMap<>();
             reqMap.put("user_id", from);
             reqMap.put("text", body);
-            if (deepestOriginal != null && !deepestOriginal.isBlank()) reqMap.put("original_text", deepestOriginal);
-            reqMap.put("thread_text", body);
             String jsonRequest = new Gson().toJson(reqMap);
             // P1 fix: use getResponseWithUsage to capture tokens/latency for observability (step 9)
             AgentClient.AgentResult result = agent.getResponseWithUsage(jsonRequest);
@@ -139,24 +139,14 @@ public class EmailHandler implements YcFunction<String, String> {
             }
             String replySubject = buildReplySubject(originalSubject);
             sender.sendWithThreading(from, replySubject, response, originalMessageId, body);
-            // Log token/latency explicitly for comparison with messages.tokens_in/out (≤10% rule)
+            // Log token/latency explicitly for comparison with messages.tokens_in/out (≤10% rule).
             System.out.printf("EMAIL_TOKENS user_id=%s input=%d output=%d latency=%d responseId=%s model=%s%s",
                     from, result.inputTokens(), result.outputTokens(), result.latencyMs(), result.responseId(), result.model(), System.lineSeparator());
-            // Persist agent reply with tokens/model directly to YDB (fallback if MCP append-message missed tokens)
-            // per step-9 hint: "доставайте их отдельно" — poller side is authoritative source of usage
-            try {
-                ydbSaver.trySave(from, result, response);
-            } catch (Exception e) {
-                System.out.println("WARN: ydbSaver failed (fail-open): " + e.getMessage());
-            }
-            // Code fix for 3-email thread: if ticket was created on confirmation "Да", overwrite tickets.text with deepest quoted original
-            if (result.ticketId() != null && deepestOriginal != null && !deepestOriginal.isBlank()) {
-                try {
-                    ydbSaver.tryCorrectTicketText(result.ticketId(), deepestOriginal);
-                } catch (Exception e) {
-                    System.out.println("WARN: tryCorrectTicketText failed (fail-open): " + e.getMessage());
-                }
-            }
+            // Step 9 ("доставайте их отдельно"): poller is the authoritative source of usage — the LLM agent
+            // cannot see its own tokens/latency. Append the role=agent row with real usage via ydb-tickets
+            // append-message. create-ticket (by agent) already wrote the role=user row with the client's
+            // verbatim words. See ADR-0001 amendment.
+            ydbSaver.trySave(from, result, response);
             success = true;
             return 1;
         } catch (MessagingException e) {
@@ -202,58 +192,5 @@ public class EmailHandler implements YcFunction<String, String> {
             return trimmed;
         }
         return "Re: " + trimmed;
-    }
-
-    /**
-     * Extracts deepest nested quoted block (original first question) from reply body.
-     * Counts leading {@code >} markers; max depth is considered original.
-     * Used to preserve original user question in 3-email thread where current body is "Да, создай".
-     * Visible for testing.
-     */
-    static String extractDeepestQuoted(String body) {
-        if (body == null || body.isBlank()) return null;
-        String[] lines = body.split("\\r?\\n");
-        int maxDepth = 0;
-        java.util.Map<Integer, java.util.List<String>> byDepth = new java.util.HashMap<>();
-        for (String line : lines) {
-            String t = line;
-            int depth = 0;
-            int i = 0;
-            // count leading ">" with optional spaces
-            while (i < t.length()) {
-                // skip spaces
-                while (i < t.length() && t.charAt(i) == ' ') i++;
-                if (i < t.length() && t.charAt(i) == '>') {
-                    depth++;
-                    i++;
-                } else break;
-            }
-            if (depth == 0) continue;
-            String content = t.substring(i).trim();
-            // skip empty or "Свернуть" UI markers and agent boilerplate
-            if (content.isEmpty()) continue;
-            if (content.equalsIgnoreCase("Свернуть")) continue;
-            // also skip lines that are just agent's prompt
-            byDepth.computeIfAbsent(depth, k -> new java.util.ArrayList<>()).add(content);
-            if (depth > maxDepth) maxDepth = depth;
-        }
-        if (maxDepth == 0) return null;
-        java.util.List<String> deepest = byDepth.get(maxDepth);
-        if (deepest == null || deepest.isEmpty()) return null;
-        // join, but also filter out agent's "У меня нет информации" at deepest? shouldn't be deepest
-        String joined = String.join("\n", deepest).trim();
-        // Heuristic: if deepest block is very short confirmation, ignore
-        if (joined.length() < 15) return null;
-        // filter if deepest is just agent's proposal (should not happen at max depth)
-        String low = joined.toLowerCase();
-        if (low.contains("у меня нет информации") || low.contains("хотите, чтобы я создал тикет")) {
-            // this is not original question, find next candidate
-            if (byDepth.size() > 1) {
-                // try second max
-                // actually original should be deepest, but if deepest is agent text due to quoting depth bug, fallback
-                return null;
-            }
-        }
-        return joined;
     }
 }

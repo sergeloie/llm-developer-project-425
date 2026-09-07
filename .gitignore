@@ -3,6 +3,7 @@
 token.txt
 *.iml
 HANDOFF*
+/.scratch/
 /steps
 /docs/*.md
 
