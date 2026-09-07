@@ -9,7 +9,7 @@ AI-агент службы поддержки на Yandex Cloud: принима�
 
 ## Help Desk ящик
 
-- **Адрес:** `serge.loie@yandex.ru`
+- **Адрес:** `anser.74@yandex.ru`
 - **Латентность:** ~60 секунд (pull-архитектура: `email-poller` опрашивает IMAP каждые 60s по cron/триггеру)
 - **Протоколы:** IMAP `993 SSL` (чтение `UNSEEN`), SMTP `465 SSL` (ответы)
 
@@ -86,13 +86,13 @@ ORGANIZATION_ID=...
 MCP_SERVER_URL=https://...
 VECTOR_STORE_ID=vs_...
 IMAP_HOST=imap.yandex.ru
-IMAP_USER=serge.loie@yandex.ru
+IMAP_USER=anser.74@yandex.ru
 # IMAP_PASSWORD via Lockbox email-credentials (see .env.example)
 SMTP_HOST=smtp.yandex.ru
 SMTP_PORT=465
-SMTP_USER=serge.loie@yandex.ru
+SMTP_USER=anser.74@yandex.ru
 # SMTP_PASSWORD via Lockbox email-credentials (see .env.example)
-HELPDESK_MAILBOX=serge.loie@yandex.ru  # алиас OPERATOR_EMAIL поддерживается (S5)
+HELPDESK_MAILBOX=anser.74@yandex.ru  # алиас OPERATOR_EMAIL поддерживается (S5)
 # SMTP_DEBUG=true  # включить Session debug
 
 yc init
@@ -157,7 +157,7 @@ yc config set folder-id <FOLDER_ID>
 ### Проверено вручную на реальном YC (b1gvnmb6q5tj79tmk27j) 03.09.2026 ✅
 
 - [x] `yc serverless function invoke ydb-tickets` — PII `+7 (***) ***-**-67`/`[email]`/`****-1111` + injection `{"error":"Запрос заблокирован модерацией"}` — `ALERT_INJECTION_BLOCKED`
-- [x] `email-poller` → IMAP `serge.loie@yandex.ru` (UNSEEN) → `AgentClient` → SMTP reply — `2 mail(s) done` + `TOKENS_USAGE`/`EMAIL_TOKENS`, триггер `email-poller-trigger` cron `0/1 * * * ? *` в UI (на паузе)
+- [x] `email-poller` → IMAP `anser.74@yandex.ru` (UNSEEN) → `AgentClient` → SMTP reply — `2 mail(s) done` + `TOKENS_USAGE`/`EMAIL_TOKENS`, триггер `email-poller-trigger` cron `0/1 * * * ? *` в UI (на паузе)
 - [x] `file_search` RAG (`VECTOR_STORE_ID=fvtn72d9ke0vulslnq37`) — `"Как оформить командировку?"` → ответ с `*Источник: «Командировки»*` (7 шагов, RAG ok); вне базы `"Как переименовать доменное имя?"` → fallback/ `list-my-tickets`
 - [x] Workflow `daily-escalation` `dfqtbm1u6rm3494bud8a` yawl 0.2 `PT24H` (тест `PT1H`) — `FINISHED 1.6s {"tickets":[]}` / `FINISHED 8.6s {"status":"sent"}` c `summary`/`recommended_action`, `functionCall` → `email-sender d4evk9lljvqkg2ffqkjk`
 - [x] Токены `Responses API usage` → `TOKENS_USAGE`/`EMAIL_TOKENS` — сверка с `messages.tokens_in/out` ≤10% (см. `docs/YC_JAVA_AND_WORKFLOW_DEPLOY_HANDBOOK.md` §4)
@@ -170,7 +170,7 @@ yc config set folder-id <FOLDER_ID>
 
 ## Что попробовать (4 промпта)
 
-Отправьте на `serge.loie@yandex.ru` или вызовите `ydb-tickets` напрямую:
+Отправьте на `anser.74@yandex.ru` или вызовите `ydb-tickets` напрямую:
 
 ### 1. Обычное обращение (RAG ≤3 предложения со ссылкой)
 
@@ -182,7 +182,7 @@ yc config set folder-id <FOLDER_ID>
 ### 2. Создание тикета
 
 ```powershell
-yc serverless function invoke ydb-tickets --data '{"action":"create-ticket","user_id":"serge.loie@yandex.ru","category":"bug","text":"Сломался принтер HP LaserJet, не печатает"}'
+yc serverless function invoke ydb-tickets --data '{"action":"create-ticket","user_id":"anser.74@yandex.ru","category":"bug","text":"Сломался принтер HP LaserJet, не печатает"}'
 # → {"ticket_id":"...","created_at":"..."}
 ```
 
@@ -204,7 +204,7 @@ yc serverless function invoke ydb-tickets --data '{"action":"create-ticket","use
 
 Просмотр тикетов:
 ```powershell
-yc serverless function invoke ydb-tickets --data '{"action":"list-my-tickets","user_id":"serge.loie@yandex.ru"}'
+yc serverless function invoke ydb-tickets --data '{"action":"list-my-tickets","user_id":"anser.74@yandex.ru"}'
 yc serverless function invoke ydb-tickets --data '{"action":"append-message","ticket_id":"<id>","role":"agent","text":"Reply"}'
 ```
 
