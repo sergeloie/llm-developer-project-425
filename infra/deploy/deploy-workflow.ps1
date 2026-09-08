@@ -108,5 +108,41 @@ if ($LASTEXITCODE -ne 0) { throw "Workflow deploy failed" }
 try { $oldEA3=$ErrorActionPreference; $ErrorActionPreference="Continue"; yc serverless workflow add-access-binding --name $workflowName --service-account-id $SA_ID --role serverless.workflows.executor 2>&1 | Out-Null; $ErrorActionPreference=$oldEA3 } catch { $ErrorActionPreference="Continue" }
 try { $oldEA4=$ErrorActionPreference; $ErrorActionPreference="Continue"; yc serverless workflow add-access-binding --name $workflowName --service-account-id $SA_ID --role serverless.workflows.viewer 2>&1 | Out-Null; $ErrorActionPreference=$oldEA4 } catch { $ErrorActionPreference="Continue" }
 
+# 9. Timer trigger: start daily-escalation Mon-Fri 09:00 MSK (06:00 UTC)
+#    Idempotent: create if missing, update if exists. Fatal on CLI failure.
+Write-Host "Ensuring timer trigger daily-escalation-timer..." -ForegroundColor Cyan
+$triggerName = "daily-escalation-timer"
+$cronUtc = "0 6 ? * MON-FRI *"   # 09:00 MSK = 06:00 UTC (timer cron is UTC+0)
+# Resolve workflow ID by name (needed for trigger create/update)
+$wfJson = yc serverless workflow get --name $workflowName --format json 2>&1
+if ($LASTEXITCODE -ne 0) { throw "Failed to get workflow $workflowName (trigger step aborted)" }
+$workflowId = ($wfJson | ConvertFrom-Json).workflow.id
+if (-not $workflowId) { throw "Failed to resolve workflow id for $workflowName" }
+Write-Host "  workflowId=$workflowId"
+
+$existingTrigger = $null
+try {
+    $oldEA5 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    $trigJson = yc serverless trigger get --name $triggerName --format json 2>&1
+    $trigCode = $LASTEXITCODE
+    $ErrorActionPreference = $oldEA5
+    if ($trigCode -eq 0 -and $trigJson) { $existingTrigger = $trigJson | ConvertFrom-Json }
+} catch { $existingTrigger = $null; $ErrorActionPreference = "Continue" }
+
+if ($null -ne $existingTrigger) {
+    # Note: `update timer <name>` ignores the positional; pass trigger id explicitly
+    $triggerId = $existingTrigger.id
+    if (-not $triggerId) { throw "Trigger exists but id is missing" }
+    Write-Host "  Trigger exists ($triggerId), updating..." -ForegroundColor Yellow
+    yc serverless trigger update timer --id $triggerId --new-cron-expression $cronUtc --new-start-workflow-id $workflowId --new-start-workflow-service-account-id $SA_ID
+    if ($LASTEXITCODE -ne 0) { throw "Trigger update failed" }
+    Write-Host "  Trigger updated ($triggerName)."
+} else {
+    Write-Host "  Trigger not found, creating..." -ForegroundColor Yellow
+    yc serverless trigger create timer $triggerName --cron-expression $cronUtc --start-workflow-id $workflowId --start-workflow-service-account-id $SA_ID
+    if ($LASTEXITCODE -ne 0) { throw "Trigger create failed" }
+    Write-Host "  Trigger created ($triggerName)."
+}
+
 Write-Host "Workflow daily-escalation deploy finished." -ForegroundColor Green
 Write-Host "  Spec: $renderedPath yawl: '0.2' start: fetchOverdueTickets" -ForegroundColor Cyan
