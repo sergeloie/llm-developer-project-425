@@ -6,6 +6,7 @@ HANDOFF*
 /.scratch/
 /steps
 /docs/*.md
+/docs/adr/
 
 # локальные агентские скиллы — НЕ часть проекта (п.9 ревью)
 /.agents/
