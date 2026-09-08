@@ -39,15 +39,26 @@ $ZIP_PATH = Join-Path $ProjectRoot "email-poller.zip"
 if (Test-Path $STAGE) { Remove-Item -Recurse -Force $STAGE }
 New-Item -ItemType Directory -Path "$STAGE\src\main\java\ru\anseranser\mail" -Force | Out-Null
 
-# 3.1 Copy java sources: весь модуль email-poller + нужный файл из common
+# 3.1 Copy java sources: весь модуль email-poller + нужные файлы из common
+# (SmtpEmailSender — SMTP; PiiMasker + InjectionClassifier — ingress-защита EmailHandler)
 Get-ChildItem -Path "$ProjectRoot\email-poller\src\main\java\ru\anseranser\mail\*.java" | ForEach-Object {
     Copy-Item -Path $_.FullName -Destination "$STAGE\src\main\java\ru\anseranser\mail\"
 }
 Copy-Item -Path "$ProjectRoot\common\src\main\java\ru\anseranser\mail\SmtpEmailSender.java" -Destination "$STAGE\src\main\java\ru\anseranser\mail\" -Force
+New-Item -ItemType Directory -Path "$STAGE\src\main\java\ru\anseranser\pii" -Force | Out-Null
+New-Item -ItemType Directory -Path "$STAGE\src\main\java\ru\anseranser\security" -Force | Out-Null
+Copy-Item -Path "$ProjectRoot\common\src\main\java\ru\anseranser\pii\PiiMasker.java" -Destination "$STAGE\src\main\java\ru\anseranser\pii\" -Force
+Copy-Item -Path "$ProjectRoot\common\src\main\java\ru\anseranser\security\InjectionClassifier.java" -Destination "$STAGE\src\main\java\ru\anseranser\security\" -Force
 
-$files = Get-ChildItem "$STAGE\src\main\java\ru\anseranser\mail\*.java"
+# Resolve-Path может вернуть short-name (RYZEN-~1), а Get-ChildItem FullName — long-name (ryzen-admin):
+# нормализуем корень через Path.GetFullPath, чтобы Substring-смещение было точным.
+$srcRoot = [System.IO.Path]::GetFullPath((Join-Path $STAGE "src"))
+$files = Get-ChildItem "$srcRoot" -Recurse -Filter *.java -File
 Write-Host "  Copied $($files.Count) java files:"
-$files | ForEach-Object { Write-Host "    $($_.Name)" }
+$files | ForEach-Object {
+    $rel = $_.FullName.Substring($srcRoot.Length + 1).Replace('\', '/')
+    Write-Host "    src/$rel"
+}
 
 # 3.2 Standalone pom.xml (без parent, без common)
 $pom = @'
@@ -138,8 +149,13 @@ function Add-FileToZip($archive, $sourcePath, $entryName) {
   $es.Close()
 }
 Add-FileToZip $archive "$STAGE\pom.xml" "pom.xml"
-Get-ChildItem "$STAGE\src\main\java\ru\anseranser\mail\*.java" | ForEach-Object {
-    $rel = "src/main/java/ru/anseranser/mail/$($_.Name)"
+# All java sources under src (mail + common-only files: pii/PiiMasker, security/InjectionClassifier)
+# Relative paths derived from Path.GetFullPath-normalized src root — string-subtracting $STAGE.Length
+# breaks when $env:TEMP is a short name (RYZEN-~1 vs ryzen-admin) and Resolve-Path keeps short names.
+$srcRoot = [System.IO.Path]::GetFullPath((Join-Path $STAGE "src"))
+Get-ChildItem "$srcRoot" -Recurse -Filter *.java -File | ForEach-Object {
+    # $srcRoot ends with "src"; relative path from it starts at "main/java/..." → prefix "src/".
+    $rel = "src/" + $_.FullName.Substring($srcRoot.Length + 1).Replace('\', '/')
     Add-FileToZip $archive $_.FullName $rel
 }
 $archive.Dispose()

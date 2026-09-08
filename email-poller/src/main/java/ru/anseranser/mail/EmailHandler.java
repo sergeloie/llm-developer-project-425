@@ -5,6 +5,8 @@ import jakarta.mail.Address;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.InternetAddress;
+import ru.anseranser.pii.PiiMasker;
+import ru.anseranser.security.InjectionClassifier;
 import yandex.cloud.sdk.functions.Context;
 import yandex.cloud.sdk.functions.YcFunction;
 
@@ -16,8 +18,24 @@ import java.util.Map;
  * LLM agent communication, and email sending.
  * Delegates work to {@link EmailReceiver}, {@link EmailTextExtractor},
  * {@link AgentClient}, and {@link SmtpEmailSender} (from common).
+ *
+ * <p>On the poller boundary the incoming email body is first PII-masked
+ * ({@link PiiMasker}) and then checked for prompt injection
+ * ({@link InjectionClassifier}). If an injection is detected, the agent is
+ * never called and no ticket is created — the client receives a neutral
+ * "information unknown" reply. This is a first line of defense on the ingress
+ * edge; {@code ydb-tickets} still re-checks on {@code create-ticket} as a
+ * second line.
  */
 public class EmailHandler implements YcFunction<String, String> {
+
+    /**
+     * Neutral reply sent when a prompt injection is detected on the poller ingress.
+     * Deliberately identical to the RAG fallback phrasing so an attacker learns nothing.
+     */
+    private static final String INJECTION_MASK_REPLY =
+            "У меня нет информации по этому вопросу в базе знаний. Могу создать обращение, "
+            + "и специалист свяжется с вами для консультации.";
 
     private final EmailReceiver receiver;
     private final SmtpEmailSender sender;
@@ -115,18 +133,7 @@ public class EmailHandler implements YcFunction<String, String> {
                 return 0;
             }
 
-            // Transport-message: pass the full email body (with all thread quotes) to the agent as `text`.
-            // The agent (LLM) is responsible for extracting the original question from the quoted chain —
-            // the poller does NOT parse "whose quote is this" (see CONTEXT.md: Транспорт-сообщение пользователя).
-            Map<String, Object> reqMap = new java.util.HashMap<>();
-            reqMap.put("user_id", from);
-            reqMap.put("text", body);
-            String jsonRequest = new Gson().toJson(reqMap);
-            // P1 fix: use getResponseWithUsage to capture tokens/latency for observability (step 9)
-            AgentClient.AgentResult result = agent.getResponseWithUsage(jsonRequest);
-            String response = result.text();
-            // Variant 1: threading — preserve user text unchanged via quoted reply, PII stays masked in YDB (ydb-tickets PiiMasker)
-            // Email quote is user-owned data, not a leak; YDB and logs keep masked version
+            // Threading headers are needed both for normal replies and the early injection reply.
             String originalMessageId = null;
             String originalSubject = null;
             try {
@@ -138,6 +145,39 @@ public class EmailHandler implements YcFunction<String, String> {
             } catch (Exception ignored) {
             }
             String replySubject = buildReplySubject(originalSubject);
+
+            // First line of defense on the ingress: mask PII, then check for prompt injection.
+            // The agent only ever sees the masked body, so no raw PII reaches the LLM and no
+            // malicious payload survives to trigger a create-ticket. ydb-tickets re-checks
+            // on create-ticket as a second line.
+            String maskedBody = PiiMasker.maskPii(body);
+            String classification = InjectionClassifier.classify(maskedBody);
+            if ("injection".equals(classification)) {
+                // Same greppable prefix as ydb-tickets ALERT_INJECTION_BLOCKED.
+                // The attempted message is logged with PII already masked (maskedBody) —
+                // raw PII never reaches the logs.
+                System.err.printf("ALERT_INJECTION_BLOCKED: user_id=%s, text_length=%d, text=%s%s",
+                        from, body.length(), maskedBody, System.lineSeparator());
+                // Neutral "information unknown" reply — no agent call, no create-ticket, no YDB write.
+                // The malicious payload is NOT echoed back in the quoted reply (pass null quote).
+                sender.sendWithThreading(from, replySubject, INJECTION_MASK_REPLY, originalMessageId, null);
+                success = true;
+                return 1;
+            }
+
+            // Transport-message: pass the full email body (with all thread quotes) to the agent as `text`.
+            // The agent (LLM) is responsible for extracting the original question from the quoted chain —
+            // the poller does NOT parse "whose quote is this" (see CONTEXT.md: Транспорт-сообщение пользователя).
+            // The body is already PII-masked above.
+            Map<String, Object> reqMap = new java.util.HashMap<>();
+            reqMap.put("user_id", from);
+            reqMap.put("text", maskedBody);
+            String jsonRequest = new Gson().toJson(reqMap);
+            // P1 fix: use getResponseWithUsage to capture tokens/latency for observability (step 9)
+            AgentClient.AgentResult result = agent.getResponseWithUsage(jsonRequest);
+            String response = result.text();
+            // Variant 1: threading — preserve user text unchanged via quoted reply, PII stays masked in YDB (ydb-tickets PiiMasker)
+            // Email quote is user-owned data, not a leak; YDB and logs keep masked version
             sender.sendWithThreading(from, replySubject, response, originalMessageId, body);
             // Log token/latency explicitly for comparison with messages.tokens_in/out (≤10% rule).
             System.out.printf("EMAIL_TOKENS user_id=%s input=%d output=%d latency=%d responseId=%s model=%s%s",
