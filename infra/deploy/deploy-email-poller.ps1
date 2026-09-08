@@ -167,6 +167,9 @@ $z.Entries | ForEach-Object { Write-Host "    $($_.FullName)" }
 $z.Dispose()
 
 # 4. Deploy function version — FQN entrypoint (create function if not exists)
+# P3 fix (rev 01 п.2): в --environment добавляем YC_FOLDER_ID ($FOLDER_ID из yc config) —
+# иначе LLM-уровень InjectionClassifier на входе выключен: без folder он возвращает safe
+# без сетевого вызова (InjectionClassifier.callLlmClassifier, fail-open), работает только regex.
 Write-Host "Deploying email-poller function from ZIP..." -ForegroundColor Cyan
 try {
     $oldEA = $ErrorActionPreference; $ErrorActionPreference = "Continue"
@@ -186,7 +189,7 @@ yc serverless function version create `
     --execution-timeout 120s `
     --source-path $ZIP_PATH `
     --service-account-id $SA_ID `
-    --environment IMAP_HOST=$env:IMAP_HOST,IMAP_USER=$env:IMAP_USER,SMTP_HOST=$env:SMTP_HOST,SMTP_PORT=$env:SMTP_PORT,SMTP_USER=$env:SMTP_USER,HELPDESK_MAILBOX=$env:HELPDESK_MAILBOX,AGENT_ID=$env:AGENT_ID,ORGANIZATION_ID=$env:ORGANIZATION_ID,MCP_SERVER_URL=$env:MCP_SERVER_URL,VECTOR_STORE_ID=$env:VECTOR_STORE_ID,YDB_TICKETS_URL=$env:YDB_TICKETS_URL,YDB_TICKETS_FUNCTION_ID=$env:YDB_TICKETS_FUNCTION_ID `
+    --environment IMAP_HOST=$env:IMAP_HOST,IMAP_USER=$env:IMAP_USER,SMTP_HOST=$env:SMTP_HOST,SMTP_PORT=$env:SMTP_PORT,SMTP_USER=$env:SMTP_USER,HELPDESK_MAILBOX=$env:HELPDESK_MAILBOX,AGENT_ID=$env:AGENT_ID,ORGANIZATION_ID=$env:ORGANIZATION_ID,MCP_SERVER_URL=$env:MCP_SERVER_URL,VECTOR_STORE_ID=$env:VECTOR_STORE_ID,YDB_TICKETS_URL=$env:YDB_TICKETS_URL,YDB_TICKETS_FUNCTION_ID=$env:YDB_TICKETS_FUNCTION_ID,YC_FOLDER_ID=$FOLDER_ID `
     --secret environment-variable=IMAP_PASSWORD,name=email-credentials,key=password `
     --secret environment-variable=SMTP_PASSWORD,name=email-credentials,key=password `
     --secret environment-variable=YANDEX_API_KEY,name=agent-api-key,key=agent-api-key

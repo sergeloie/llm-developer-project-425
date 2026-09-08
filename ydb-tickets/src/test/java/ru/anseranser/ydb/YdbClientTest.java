@@ -138,6 +138,27 @@ class YdbClientTest {
     }
 
     @Test
+    void listMyTickets_usesSecondaryIndexViewAndLimit() {
+        // п.5 ревью: выборка через вторичный индекс tickets_by_user (VIEW), с ORDER BY + LIMIT
+        mockSession();
+        var dataQueryResult = mock(tech.ydb.table.query.DataQueryResult.class);
+        when(dataQueryResult.getResultSet(0)).thenReturn(resultSetReader);
+        when(resultSetReader.next()).thenReturn(false);
+        when(session.executeDataQuery(anyString(), any(TxControl.class), any(Params.class)))
+                .thenReturn(CompletableFuture.completedFuture(Result.success(dataQueryResult)));
+
+        ydbClient.listMyTickets("u1");
+
+        ArgumentCaptor<String> queryCaptor = ArgumentCaptor.forClass(String.class);
+        verify(session).executeDataQuery(queryCaptor.capture(), any(TxControl.class), any(Params.class));
+        String query = queryCaptor.getValue();
+        assertTrue(query.contains("FROM tickets VIEW tickets_by_user"), "must read via secondary index: " + query);
+        assertTrue(query.contains("WHERE user_id = $user_id"), "must filter by user_id: " + query);
+        assertTrue(query.contains("ORDER BY created_at DESC"), "must sort freshest first: " + query);
+        assertTrue(query.contains("LIMIT " + YdbClient.LIST_TICKETS_LIMIT), "must limit results: " + query);
+    }
+
+    @Test
     void listMyTickets_emptyReturnsEmptyArray() {
         mockSession();
         var dataQueryResult = mock(tech.ydb.table.query.DataQueryResult.class);

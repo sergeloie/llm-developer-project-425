@@ -56,7 +56,9 @@ public class YdbTicketsHandler implements YcFunction<String, String> {
 
     @Override
     public String handle(String input, Context context) {
-        System.out.println("[YdbTicketsHandler] handle: START event=" + preview(input));
+        // rev 01 п.4: не логируем содержимое входного события — там может быть сырой PII (text до маскирования).
+        // Оставляем только безопасную сводку (длина), «какое событие произошло» видно ниже по action + ключам диспетчера.
+        System.out.println("[YdbTicketsHandler] handle: START eventLength=" + (input == null ? 0 : input.length()));
         try {
             JsonNode root = JsonEventParser.parse(input);
             // Fallback: if JsonEventParser returned null due to gateway body being object, try dispatcher parse
@@ -116,7 +118,7 @@ public class YdbTicketsHandler implements YcFunction<String, String> {
         // Injection classification before masking (use raw text)
         String classification = InjectionClassifier.classify(text);
         if ("injection".equals(classification)) {
-            System.err.println("ALERT_INJECTION_BLOCKED: user_id=" + userId + ", text_length=" + text.length());
+            System.out.println("ALERT_INJECTION_BLOCKED: user_id=" + userId + ", text_length=" + text.length());
             return errorResponse("Запрос заблокирован модерацией");
         }
         if ("off-topic".equals(classification)) {
@@ -165,6 +167,15 @@ public class YdbTicketsHandler implements YcFunction<String, String> {
         boolean hasPii = PiiMasker.containsPii(text);
         System.out.println("INFO: append-message ticket_id=" + ticketId + ", text_length=" + text.length() + ", has_pii=" + hasPii);
 
+        // Injection guardrail на всей границе записи (rev 01 п.3): append-message отдан модели
+        // (AgentClient allowedToolsOfMcp) и через него можно записать в messages произвольный текст
+        // (ПДн, мусор, инъекцию). Проверяем на входе так же, как в create-ticket.
+        String classification = InjectionClassifier.classify(text);
+        if ("injection".equals(classification)) {
+            System.out.println("ALERT_INJECTION_BLOCKED: append-message ticket_id=" + ticketId + ", role=" + role + ", text_length=" + text.length());
+            return errorResponse("Запрос заблокирован модерацией");
+        }
+
         YdbClient client = getOrCreateYdbClient();
         return client.appendMessage(ticketId, role, masked, model, tokensIn, tokensOut, latencyMs);
     }
@@ -184,10 +195,5 @@ public class YdbTicketsHandler implements YcFunction<String, String> {
         } catch (Exception e) {
             return "{\"error\":\"" + message.replace("\"", "\\\"") + "\"}";
         }
-    }
-
-    private String preview(String s) {
-        if (s == null) return "null";
-        return s.length() > 100 ? s.substring(0, 100) + "..." : s;
     }
 }

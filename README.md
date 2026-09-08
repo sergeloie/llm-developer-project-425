@@ -132,7 +132,7 @@ yc config set folder-id <FOLDER_ID>
 - Никогда не интерполировать untrusted в trusted-контекст — передавать как `input`, не в системный промпт.
 - **Путь записи в YDB (амендмент ADR-0001):** `create-ticket` — только агент через MCP (тикет + первая `role=user` строка, текст = дословные слова клиента); `role=agent` строку с реальными model/tokens/latency дописывает poller напрямую (`YdbMessageSaver.trySave` → HTTP `append-message`) — шаг 9 «доставайте их отдельно», poller авторитетный источник usage.
 - PII маскируется **на входе в email-poller** (`PiiMasker` до промпта агента) и **повторно перед записью в YDB** (та же `PiiMasker` в `ydb-tickets`): `+7 (999) 123-45-67 → +7 (***) ***-**-67`, `ivan@example.com → [email]`, `4111 1111 1111 1111 → ****-****-****-1111`. В почтовом ответе цитата исходного письма не маскируется (канал пользователя).
-- Инъекции — **первая линия на входе в email-poller**: `InjectionClassifier` (текст уже после `PiiMasker`): уровень 1 regex (`ignore previous`, `DROP TABLE`, `удали все тикеты` …), уровень 2 `yandexgpt-lite` (`safe|injection|off-topic`, работает когда задан `FOLDER_ID`), `fail-open` при ошибке. `injection` → нейтральный ответ «У меня нет информации…», агент не вызывается, тикет не создаётся, лог `email-poller` → `ALERT_INJECTION_BLOCKED` с замаскированным текстом. **Вторая линия** — `ydb-tickets` на `create-ticket` (`{"error":"Запрос заблокирован модерацией"}`).
+- Инъекции — **первая линия на входе в email-poller**: `InjectionClassifier` (текст уже после `PiiMasker`): уровень 1 regex (`ignore previous`, `DROP TABLE`, `удали все тикеты` …), уровень 2 `yandexgpt-lite` (`safe|injection|off-topic`, работает когда задан `FOLDER_ID`), `fail-open` при ошибке. `injection` → нейтральный ответ «У меня нет информации…», агент не вызывается, тикет не создаётся, лог `email-poller` → `ALERT_INJECTION_BLOCKED` с замаскированным текстом. **Вторая линия** — `ydb-tickets` на **всей границе записи**: `create-ticket` **и** `append-message` (`{"error":"Запрос заблокирован модерацией"}`) — `append-message` отдан модели через `allowedToolsOfMcp`, поэтому проверяется так же, как `create-ticket` (п.3 ревью).
 - Логи без сырого PII: `action`, `user_id`, `text_length`, `has_pii`, `ticket_id`; в `ALERT_INJECTION_BLOCKED` текст только замаскированный (`text=<PiiMasker(текст)>`).
 - SMTP debug под флагом `SMTP_DEBUG=true` (S6) — без флага `Session` не спамит.
 
@@ -150,7 +150,7 @@ yc config set folder-id <FOLDER_ID>
 - [x] `mvn clean verify` в корне — все 4 модуля, 130 тестов зелёные (44+30+44+12), shaded jar собираются
 - [x] `common`: `PiiMasker`/`InjectionClassifier`/`YdbTransportFactory`/`SmtpEmailSender`/`JsonEventParser` — 44 теста (+6 `InjectionClassifierLlmTest` c `yandexgpt-lite` mock + `HttpServer`, 6 `SmtpEmailSenderTest` c `SMTP_DEBUG`)
 - [x] `email-poller`: `EmailHandler` (UNSEEN via `FlagTerm`, `finally markAsSeen` — M1, `EmailTextExtractor` text/plain > html + Jsoup, **ингрес-защита**: `PiiMasker` → `InjectionClassifier`, `injection` → нейтральный ответ + `ALERT_INJECTION_BLOCKED` с замаскированным текстом), `AgentClient` — один `file_search` (VECTOR_STORE_ID `fvtn72d9ke0vulslnq37`) + один `mcp` (NEVER), 30 тестов (+`AgentResult` c `TOKENS_USAGE`/`EMAIL_TOKENS` — P1, +`YdbMessageSaver.trySave` contract — амендмент ADR-0001, +3 ingress-теста). Агенту передаются только `user_id`+`text` (текст уже после `PiiMasker`); `create-ticket` — только агент через MCP; `role=agent` строку с real usage дописывает poller (`YdbMessageSaver.trySave` → HTTP `append-message`); `extractDeepestQuoted`/`original_text`/`thread_text`/`update-ticket-text` удалены (ADR-0001)
-- [x] `ydb-tickets`: парсит 3 источника (direct / API Gateway httpMethod+body / MCP Hub по ключам), `YdbClient` (`TxControl.serializableRw`, `$id` params), PII + injection, 44 теста; ровно 3 инструмента (`create-ticket`/`list-my-tickets`/`append-message`), `update-ticket-text` удалён (ADR-0001)
+- [x] `ydb-tickets`: парсит 3 источника (direct / API Gateway httpMethod+body / MCP Hub по ключам), `YdbClient` (`TxControl.serializableRw`, `$id` params), PII + injection, 48 тестов; ровно 3 инструмента (`create-ticket`/`list-my-tickets`/`append-message`), `update-ticket-text` удалён (ADR-0001); инъекционный guardrail на всей границе записи (create-ticket + append-message, п.3 ревью); `list-my-tickets` читает через вторичный индекс `VIEW tickets_by_user` + `ORDER BY created_at DESC + LIMIT 10` (п.5 ревью)
 - [x] `email-sender`: `{"subject","body"}` (строка/массив/объект → pretty JSON) → `HELPDESK_MAILBOX`/`OPERATOR_EMAIL` (алиас, S5), 12 тестов
 - [x] `infra`: `schema.sql` (tickets+messages, `tickets_by_user`), `mcp-tools.yaml.template` / `daily-escalation.yaml.template` (`yawl: 0.2`, `database`, `functionId` — шаблоны `{{...}}`), `deploy-*.ps1` берут `.env` + `yc config`
 - [x] Smoke без реального YC/IMAP покрыт моками: `EventDispatcher` все 3 источника, PII маскируется, injection блокируется (`YdbTicketsHandlerTest` + `SecurityTest`)
@@ -160,6 +160,9 @@ yc config set folder-id <FOLDER_ID>
 - [x] `yc serverless function invoke ydb-tickets` — PII `+7 (***) ***-**-67`/`[email]`/`****-1111` + injection `{"error":"Запрос заблокирован модерацией"}` — `ALERT_INJECTION_BLOCKED`
 - [x] `email-poller` → IMAP `anser.74@yandex.ru` (UNSEEN) → `AgentClient` → SMTP reply — `2 mail(s) done` + `TOKENS_USAGE`/`EMAIL_TOKENS`, триггер `email-poller-trigger` cron `0/1 * * * ? *` в UI (на паузе)
 - [x] `email-poller` ингрес-защита (08.09.2026): провокационное письмо с телефоном → нейтральный ответ без цитирования атаки, в логах `ALERT_INJECTION_BLOCKED ... text=<замаскированный текст>`, агент и YDB не затронуты (`email-poller` v`d4enc4je4jvci0rl82gn`)
+- [x] Логи без сырого PII (п.4 ревью, 08.09.2026): `preview(input)` убран из `YdbTicketsHandler.handle`/`EventDispatcher.dispatch` (логируется только `eventLength`), `textPreview` убран из `YdbClient.createTicket` (только `text_length`); ошибка MCP-диспетчера логирует ключи без значений, исключение не содержит json; контракт покрыт тестом `handle_logs_never_contain_raw_pii` (`ydb-tickets` v`12:49:38`) — см. smoke `p4-verify@test.com`: в YDB `+7 (***) ***-**-33`; `InjectionClassifier` не логирует ответ/тело LLM (только `length`/`LLM HTTP <code>`)
+- [x] `list-my-tickets` через вторичный индекс (п.5 ревью, 08.09.2026): `SELECT ... FROM tickets VIEW tickets_by_user WHERE user_id = $user_id ORDER BY created_at DESC LIMIT 10` — smoke `limit-test@test.com` (12 тикетов): вернулись ровно 10, `12,11,...,3` (свежие сверху); контракт покрыт тестом `listMyTickets_usesSecondaryIndexViewAndLimit`
+- [x] `.env.example` дополнен (п.7 ревью, 08.09.2026): `YDB_TICKETS_URL` + `YDB_TICKETS_FUNCTION_ID` (append-message роль=agent из email-poller в ydb-tickets; обе уже передавались `deploy-email-poller.ps1` в `--environment`, не хватало только примера в шаблоне)
 - [x] `file_search` RAG (`VECTOR_STORE_ID=fvtn72d9ke0vulslnq37`) — `"Как оформить командировку?"` → ответ с `*Источник: «Командировки»*` (7 шагов, RAG ok); вне базы `"Как переименовать доменное имя?"` → fallback/ `list-my-tickets`
 - [x] Workflow `daily-escalation` `dfqtbm1u6rm3494bud8a` yawl 0.2 `PT24H` (тест `PT1H`) — `FINISHED 1.6s {"tickets":[]}` / `FINISHED 8.6s {"status":"sent"}` c `summary`/`recommended_action`, `functionCall` → `email-sender d4evk9lljvqkg2ffqkjk`
 - [x] Токены `Responses API usage` → `TOKENS_USAGE`/`EMAIL_TOKENS` — сверка с `messages.tokens_in/out` ≤10% (см. `docs/YC_JAVA_AND_WORKFLOW_DEPLOY_HANDBOOK.md` §4)
@@ -240,16 +243,18 @@ yc logging read --filter resource_id=$($CF2.id) --limit 20
 yc serverless workflow execution get <execution_id>  # result.result_json — полный output
 ```
 
-Безопасное логирование на входе (`EmailHandler.java`):
+Безопасное логирование на входе (`EmailHandler.java`) — все логи через `System.out.println` (Cloud Logging не отслеживает stderr):
 ```java
-System.err.println("ALERT_INJECTION_BLOCKED: user_id=" + from + ", text_length=" + body.length() + ", text=" + maskedBody);  // text — уже после PiiMasker
+System.out.println("ALERT_INJECTION_BLOCKED: user_id=" + from + ", text_length=" + body.length() + ", text=" + maskedBody);  // text — уже после PiiMasker
 ```
 
 Безопасное логирование (`YdbTicketsHandler.java`):
 ```java
+System.out.println("[YdbTicketsHandler] handle: START eventLength=" + input.length());  // п.4 ревью: «какое событие» без содержимого (сырой text не логируется)
 System.out.println("INFO: create-ticket user_id=" + userId + ", text_length=" + text.length() + ", has_pii=" + hasPii);
-System.err.println("ALERT_INJECTION_BLOCKED: user_id=" + userId + ", text_length=" + text.length());
+System.out.println("ALERT_INJECTION_BLOCKED: user_id=" + userId + ", text_length=" + text.length());
 ```
+`EventDispatcher.dispatch` — то же: `START eventLength=...`, при ошибке MCP Hub логируются только имена ключей (`fieldNames()`), без значений.
 
 ### Токены (шаг 9, `step9/check-tokens.ps1`)
 
@@ -268,7 +273,8 @@ SELECT ticket_id, role, text, tokens_in, tokens_out, latency_ms FROM messages OR
 Уже покрыты моками и выполняются в `mvn verify`:
 
 - `EventDispatcherTest` — 16 тестов: direct / API Gateway (`body` строкой и объектом) / MCP Hub (`user_id+category+text` → create-ticket и т.д.), ошибки
-- `YdbTicketsHandlerTest` — 13 тестов: PII `+7 (***) ***-**-67`, `[email]`, injection `DROP TABLE` → `Запрос заблокирован модерацией`, `has_pii` логи
+- `YdbTicketsHandlerTest` — 18 тестов: PII `+7 (***) ***-**-67`, `[email]`, injection `DROP TABLE` → `Запрос заблокирован модерацией`, `has_pii` логи, контракт «`raw PII` не попадает в логи» (п.4 ревью)
+- `YdbClientTest` — 14 тестов: create-ticket (upsert + params), list-my-tickets (в т.ч. контракт `VIEW tickets_by_user` + `ORDER BY created_at DESC` + `LIMIT 10`, п.5 ревью), append-message, пустые/blank-аргументы
 - `SecurityTest` / `JsonEventParserTest` / `AgentClientTest` — file_search + mcp tools, PII-паттерны
 
 ## Полезные команды

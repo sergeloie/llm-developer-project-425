@@ -41,7 +41,7 @@ public class EventDispatcher {
             return JsonEventParser.parse(input);
         } catch (Exception e) {
             // try fallback to common parser error handling
-            System.err.println("ERROR: Failed to parse input: " + e.getMessage());
+            System.out.println("ERROR: Failed to parse input: " + e.getMessage());
             return null;
         }
     }
@@ -60,7 +60,8 @@ public class EventDispatcher {
      * Throws IllegalArgumentException for invalid JSON or undetectable action.
      */
     public String dispatch(String event) {
-        System.out.println("[EventDispatcher] dispatch: START event=" + preview(event));
+        // rev 01 п.4: не логируем содержимое события (сырой PII), только безопасную сводку — длину + тип источника (ниже).
+        System.out.println("[EventDispatcher] dispatch: START eventLength=" + (event == null ? -1 : event.length()));
         if (event == null || event.isBlank()) {
             throw new IllegalArgumentException("Empty event");
         }
@@ -131,18 +132,20 @@ public class EventDispatcher {
     }
 
     private String dispatchFromMcpHub(JsonNode json) {
-        System.out.println("[EventDispatcher] dispatchFromMcpHub: START keys=" + json.fieldNames());
+        System.out.println("[EventDispatcher] dispatchFromMcpHub: START keys=" + keysOf(json));
         String detected = JsonEventParser.detectAction(json);
         if (detected != null) {
             System.out.println("[EventDispatcher] dispatchFromMcpHub: FINISHED action=" + detected);
             return detected;
         }
-        System.out.println("[EventDispatcher] dispatchFromMcpHub: ERROR Cannot determine action from keys: " + json);
-        throw new IllegalArgumentException("Cannot determine action from keys: " + json);
+        System.out.println("[EventDispatcher] dispatchFromMcpHub: ERROR Cannot determine action from keys: " + keysOf(json));
+        // ВАЖНО (п.4): исключение НЕ содержит json — иначе сырые данные (текст/PII) утекли бы в лог через e.getMessage()
+        throw new IllegalArgumentException("Cannot determine action from keys");
     }
 
-    private String preview(String s) {
-        if (s == null) return "null";
-        return s.length() > 100 ? s.substring(0, 100) : s;
+    private String keysOf(JsonNode json) {
+        java.util.ArrayList<String> keys = new java.util.ArrayList<>();
+        json.fieldNames().forEachRemaining(keys::add);
+        return String.join(",", keys);
     }
 }

@@ -7,6 +7,12 @@ HANDOFF*
 /steps
 /docs/*.md
 
+# локальные агентские скиллы — НЕ часть проекта (п.9 ревью)
+/.agents/
+
+# служебная инвентаризация, не для репозитория (п.9 ревью)
+/PROJECT_FILES_INVENTORY.md
+
 ### Java template
 # Compiled class file
 *.class

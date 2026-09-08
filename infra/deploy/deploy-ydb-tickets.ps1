@@ -163,6 +163,8 @@ $z.Dispose()
 # S3 fix: YDB_TOKEN (секрет ydb-token) НЕ используется — YDB клиент аутентифицируется
 # через IAM сервисного аккаунта (YdbTransportFactory → CloudAuthHelper.getAuthProviderFromEnviron() → metadata service).
 # Переменная/secret YDB_TOKEN оставлена в коде для совместимости, но не требуется для деплоя ydb-tickets.
+# P3 fix (rev 01 п.2): пробрасываем YC_FOLDER_ID + YANDEX_API_KEY — иначе LLM-уровень InjectionClassifier
+# на create-ticket в облаке выключен (fail-open на "safe" без сетевого вызова, работает только regex).
 Write-Host "Deploying ydb-tickets function from ZIP..." -ForegroundColor Cyan
 yc serverless function version create `
     --function-name ydb-tickets `
@@ -172,7 +174,8 @@ yc serverless function version create `
     --execution-timeout 30s `
     --source-path $ZIP_PATH `
     --service-account-id $SA_ID `
-    --environment YDB_ENDPOINT=$env:YDB_ENDPOINT,YDB_DATABASE=$env:YDB_DATABASE
+    --environment YDB_ENDPOINT=$env:YDB_ENDPOINT,YDB_DATABASE=$env:YDB_DATABASE,YC_FOLDER_ID=$FOLDER_ID `
+    --secret environment-variable=YANDEX_API_KEY,name=agent-api-key,key=agent-api-key
 
 if ($LASTEXITCODE -ne 0) { throw "yc function version create failed for ydb-tickets" }
 

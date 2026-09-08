@@ -22,6 +22,9 @@ public class YdbClient implements AutoCloseable {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    // п.5 ревью: «мои заявки» = последние N по created_at (свежие сверху), LIMIT обязателен против вытаскивания всей таблицы
+    static final int LIST_TICKETS_LIMIT = 10;
+
     private final TableClient tableClient;
 
     public YdbClient() {
@@ -36,7 +39,8 @@ public class YdbClient implements AutoCloseable {
     }
 
     public String createTicket(String userId, String category, String text) {
-        System.out.println("[YdbClient] createTicket: START userId=" + userId + " category=" + category + " textPreview=" + preview(text));
+        // rev 01 п.4: не логируем текст тикета (textPreview) — только безопасные метаданные + длина.
+        System.out.println("[YdbClient] createTicket: START userId=" + userId + " category=" + category + " text_length=" + (text == null ? 0 : text.length()));
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("userId must not be blank");
         }
@@ -124,9 +128,15 @@ public class YdbClient implements AutoCloseable {
             throw new IllegalArgumentException("userId must not be blank");
         }
         try (Session session = tableClient.createSession(Duration.ofSeconds(10)).join().getValue()) {
+            // п.5 ревью: выборка через вторичный индекс tickets_by_user (VIEW), без полного сканирования + LIMIT.
+            // Возвращаем последние LIST_TICKETS_LIMIT заявок пользователя (свежие сверху).
             String query =
                     "DECLARE $user_id AS Utf8; " +
-                    "SELECT id, status, category, text, created_at FROM tickets WHERE user_id = $user_id;";
+                    "SELECT id, status, category, text, created_at " +
+                    "FROM tickets VIEW tickets_by_user " +
+                    "WHERE user_id = $user_id " +
+                    "ORDER BY created_at DESC " +
+                    "LIMIT " + LIST_TICKETS_LIMIT + ";";
 
             Params params = Params.of("$user_id", PrimitiveValue.newText(userId));
 
@@ -224,11 +234,6 @@ public class YdbClient implements AutoCloseable {
             System.out.println("[YdbClient] appendMessage: ERROR " + e.getMessage() + " | caused by: " + e.getCause());
             throw new RuntimeException("Failed to append message: " + e.getMessage(), e);
         }
-    }
-
-    private String preview(String text) {
-        if (text == null) return "null";
-        return text.length() > 100 ? text.substring(0, 100) : text;
     }
 
     @Override

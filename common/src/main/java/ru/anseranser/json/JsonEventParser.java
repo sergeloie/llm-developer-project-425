@@ -34,7 +34,7 @@ public final class JsonEventParser {
             }
             return root;
         } catch (Exception e) {
-            System.err.println("ERROR: Failed to parse input: " + e.getMessage());
+            System.out.println("ERROR: Failed to parse input: " + e.getMessage());
             return null;
         }
     }

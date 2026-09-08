@@ -69,7 +69,7 @@ public class InjectionClassifier {
         try {
             return callLlmClassifier(text);
         } catch (Exception e) {
-            System.err.println("WARN: LLM classifier failed, fail-open: " + e.getMessage());
+            System.out.println("WARN: LLM classifier failed, fail-open: " + e.getMessage());
             return "safe";
         }
     }
@@ -141,7 +141,8 @@ public class InjectionClassifier {
 
         HttpResponse<String> resp = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
         if (resp.statusCode() != 200) {
-            throw new RuntimeException("LLM HTTP " + resp.statusCode() + ": " + resp.body());
+            // п.4 ревью: тело ответа LLM НЕ включаем в исключение/лог — может содержать непредсказуемый текст (отражение пользовательского ввода)
+            throw new RuntimeException("LLM HTTP " + resp.statusCode());
         }
         JsonNode root = MAPPER.readTree(resp.body());
         // path: result.alternatives[0].message.text  (Foundation Models API)
@@ -155,8 +156,8 @@ public class InjectionClassifier {
         if (answer.contains("injection")) return "injection";
         if (answer.contains("off-topic") || answer.contains("offtopic") || answer.contains("off_topic")) return "off-topic";
         if (answer.contains("safe")) return "safe";
-        // unexpected answer → fail-open but log
-        System.err.println("WARN: LLM classifier unexpected answer: " + answer);
+        // unexpected answer → fail-open but log (п.4: только длину — ответ модели может отражать пользовательский текст с PII)
+        System.out.println("WARN: LLM classifier unexpected answer, length=" + answer.length());
         return "safe";
     }
 }
